@@ -1,0 +1,35 @@
+[project]
+name = "followups-agent"
+version = "0.1.0"
+description = "Multi-intent parallel agent with follow-up suggestions (LangGraph + MCP + OpenRouter + Langfuse)"
+authors = [
+    { name = "Baryon Labs" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "langchain>=1.5.0",
+    "langchain-mcp-adapters>=0.3.2",
+    "langchain-openai>=1.8.0",
+    "langfuse>=3",
+    "langgraph>=1.2.22",
+    "mcp>=1.30.0",
+    "python-dotenv>=1.2.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.2,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "followups"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+]

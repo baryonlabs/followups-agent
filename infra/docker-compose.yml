@@ -1,0 +1,95 @@
+# 이 프로젝트 전용 로컬 Langfuse v3 (웹 포트 3100). 기존 3000 인스턴스와 분리.
+name: followups-langfuse
+x-lf-env: &lf-env
+  DATABASE_URL: postgresql://langfuse:langfuse@db:5432/langfuse
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: clickhouse
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: redissecret
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  TELEMETRY_ENABLED: "false"
+  NEXTAUTH_URL: http://localhost:3100
+services:
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    restart: always
+    depends_on: &deps
+      db: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    env_file: .env
+    environment: *lf-env
+  langfuse-web:
+    image: langfuse/langfuse:3
+    restart: always
+    depends_on: *deps
+    ports: ["3100:3000"]
+    env_file: .env
+    environment:
+      <<: *lf-env
+      LANGFUSE_INIT_ORG_ID: followups-org
+      LANGFUSE_INIT_ORG_NAME: followups
+      LANGFUSE_INIT_PROJECT_ID: followups-agent
+      LANGFUSE_INIT_PROJECT_NAME: followups-agent
+      LANGFUSE_INIT_USER_EMAIL: dev@local.test
+      LANGFUSE_INIT_USER_NAME: dev
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    restart: always
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes: [lf_ch_data:/var/lib/clickhouse, lf_ch_logs:/var/log/clickhouse-server]
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      retries: 20
+  minio:
+    image: cgr.dev/chainguard/minio
+    restart: always
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment: { MINIO_ROOT_USER: minio, MINIO_ROOT_PASSWORD: miniosecret }
+    volumes: [lf_minio:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      retries: 30
+  redis:
+    image: redis:7
+    restart: always
+    command: --requirepass redissecret
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redissecret", "ping"]
+      interval: 3s
+      retries: 20
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment: { POSTGRES_USER: langfuse, POSTGRES_PASSWORD: langfuse, POSTGRES_DB: langfuse }
+    volumes: [lf_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 3s
+      retries: 20
+volumes: { lf_db: {}, lf_ch_data: {}, lf_ch_logs: {}, lf_minio: {} }

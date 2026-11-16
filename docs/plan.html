@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>복합 의도 Follow-ups 기획</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 좌측 고정 목차 + 본문 단일 컬럼 문서. 모바일에서는 목차가 상단 가로 스크롤로 접힘 */
+:root{
+  --bg:#F6F7F9; --surface:#FFFFFF; --fg:#1B2230; --muted:#5C6678; --line:#DDE2EA;
+  --accent:#2F5BD3; --accent-soft:#E7EDFC; --code-bg:#F0F2F6;
+  --ok:#1F8A5B; --warn:#B7791F; --crit:#C2413B; --ok-soft:#E3F4EC; --warn-soft:#FBF1DF; --crit-soft:#FBE7E6;
+  --f-body:"IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --f-mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12161D; --surface:#1A2029; --fg:#E4E8EF; --muted:#9AA4B5; --line:#2C3440;
+  --accent:#7D9CF5; --accent-soft:#222C45; --code-bg:#161B23;
+  --ok:#5BC596; --warn:#E0B062; --crit:#EE817B; --ok-soft:#1B3128; --warn-soft:#33291A; --crit-soft:#3A2221;
+  color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#12161D; --surface:#1A2029; --fg:#E4E8EF; --muted:#9AA4B5; --line:#2C3440;
+  --accent:#7D9CF5; --accent-soft:#222C45; --code-bg:#161B23;
+  --ok:#5BC596; --warn:#E0B062; --crit:#EE817B; --ok-soft:#1B3128; --warn-soft:#33291A; --crit-soft:#3A2221;
+  color-scheme:dark;}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15.5px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));}
+.shell{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:48px;padding-block:40px 80px}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;font-size:13.5px}
+nav.toc .lbl{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:2px;counter-reset:t}
+nav.toc a{display:block;padding:5px 10px;border-radius:6px;color:var(--muted);text-decoration:none;border-left:2px solid transparent}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--fg);background:var(--accent-soft);outline:none}
+main{min-width:0}
+header.doc{padding-bottom:28px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font-size:clamp(26px,4vw,34px);line-height:1.3;margin:8px 0 12px;font-weight:700;text-wrap:balance;letter-spacing:-.01em}
+.lede{color:var(--muted);max-width:66ch;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.chip{font-family:var(--f-mono);font-size:12px;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+section{padding-top:44px}
+h2{font-size:21px;margin:0 0 6px;font-weight:700;text-wrap:balance;display:flex;gap:10px;align-items:baseline}
+h2 .n{font-family:var(--f-mono);font-size:13px;color:var(--accent);font-weight:500}
+h3{font-size:16.5px;margin:26px 0 8px;font-weight:600}
+p{margin:8px 0;max-width:72ch}
+.sub{color:var(--muted);margin-top:0}
+strong{font-weight:600}
+code{font-family:var(--f-mono);font-size:.88em;background:var(--code-bg);padding:1px 5px;border-radius:4px}
+pre{font-family:var(--f-mono);font-size:13px;line-height:1.6;background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;margin:12px 0}
+pre code{background:none;padding:0;font-size:inherit}
+.tw{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12.5px;font-weight:600;color:var(--muted);background:var(--code-bg)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:center;font-variant-numeric:tabular-nums;font-family:var(--f-mono)}
+.thesis{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:16px 20px;margin:16px 0}
+.thesis p{margin:0;font-size:16px}
+.callout{border-radius:8px;padding:12px 16px;margin:14px 0;font-size:14.5px}
+.callout.warn{background:var(--warn-soft)} .callout.ok{background:var(--ok-soft)} .callout.crit{background:var(--crit-soft)}
+.callout b{display:block;margin-bottom:2px}
+.pill{display:inline-block;font-family:var(--f-mono);font-size:11.5px;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.p-ok{background:var(--ok-soft);color:var(--ok)} .p-warn{background:var(--warn-soft);color:var(--warn)} .p-crit{background:var(--crit-soft);color:var(--crit)} .p-acc{background:var(--accent-soft);color:var(--accent)}
+.diagram{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;overflow-x:auto;margin:12px 0}
+.diagram pre{background:none;border:0;margin:0;padding:0}
+.turns{display:grid;gap:12px;margin:12px 0}
+.turn{display:grid;grid-template-columns:64px minmax(0,1fr);gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.turn .t{font-family:var(--f-mono);font-size:12px;color:var(--accent);padding-top:3px}
+.turn .u{font-weight:500}
+.turn .b{color:var(--muted);margin-top:4px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.fchip{font-size:13px;padding:3px 10px;border:1px solid var(--accent);color:var(--accent);border-radius:999px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:12px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;min-width:0}
+.card h4{margin:0 0 4px;font-size:15px}
+.card .sig{font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}
+.card p{font-size:14px}
+ol.steps{padding-left:20px} ol.steps li{margin:6px 0}
+footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+a{color:var(--accent)}
+@media (max-width:860px){
+  .shell{grid-template-columns:minmax(0,1fr);gap:20px;padding-block:20px 60px}
+  nav.toc{position:static}
+  nav.toc ol{display:flex;overflow-x:auto;gap:4px;padding-bottom:4px}
+  nav.toc a{white-space:nowrap;border:1px solid var(--line)}
+  .grid2{grid-template-columns:minmax(0,1fr)}
+  .turn{grid-template-columns:minmax(0,1fr);gap:4px}
+}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+
+<div class="shell">
+<nav class="toc" aria-label="목차">
+  <div class="lbl">목차</div>
+  <ol>
+    <li><a href="#overview">개요</a></li>
+    <li><a href="#pitfalls">복합 의도의 함정</a></li>
+    <li><a href="#patterns">사용한 패턴</a></li>
+    <li><a href="#arch">아키텍처</a></li>
+    <li><a href="#state">상태 스키마</a></li>
+    <li><a href="#followups">Follow-ups 분류</a></li>
+    <li><a href="#flow">대화 예시</a></li>
+    <li><a href="#subagents">Subagents 적용</a></li>
+    <li><a href="#impl">구현 골격</a></li>
+    <li><a href="#kpi">성공 지표</a></li>
+    <li><a href="#roadmap">로드맵</a></li>
+    <li><a href="#risks">리스크</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="doc">
+  <div class="eyebrow">기획안 · LangChain Multi-agent Patterns</div>
+  <h1>복합 의도 병렬 처리와 후속 질문 유도형 대화 에이전트</h1>
+  <p class="lede">사용자가 한 문장에 여러 요청을 섞어 말해도 맥락을 잃지 않고 병렬로 처리합니다. 남은 빈칸과 확인이 필요한 일은 후속 질문으로 이어 갑니다. LangGraph와 MCP를 기반으로 하며, 커머스 도메인을 예시로 들었습니다.</p>
+  <div class="meta"><span class="chip">LangGraph</span><span class="chip">MCP</span><span class="chip">Router + Custom workflow</span><span class="chip">HITL</span><span class="chip">2026-11-16</span></div>
+</header>
+
+<section id="overview">
+  <h2><span class="n">01</span>개요</h2>
+  <p>예시 입력: <strong>“아까 물어본 후드티 결제하고, 아참 배송지 변경도 지금 돼?”</strong></p>
+  <p>이 한 문장에는 결제(실행)와 배송지 변경(문의 또는 실행)이 섞여 있습니다. “아까 그 후드티”라는 이전 대화 맥락도 들어 있습니다. 이 시스템이 할 일은 세 가지입니다.</p>
+  <ol class="steps">
+    <li>의도를 여러 개로 나누고, 각 의도가 실행인지 문의인지 구분합니다.</li>
+    <li>서로 독립적인 일은 병렬로, 선후관계가 있는 일은 순서대로 처리합니다.</li>
+    <li>남은 빈칸, 확인이 필요한 일, 다음 단계를 <strong>후속 질문</strong>으로 제시해 대화를 끝까지 이어 갑니다.</li>
+  </ol>
+  <div class="thesis"><p>후속 질문은 답변 끝에 붙이는 장식이 아닙니다. 대화 스택에 남은 빈칸, 확인이 필요한 일, 다음 단계에서 <strong>계산해 내는 결과물</strong>입니다.</p></div>
+</section>
+
+<section id="pitfalls">
+  <h2><span class="n">02</span>복합 의도의 함정</h2>
+  <p class="sub">두 의도로 나눠 곧바로 동시에 실행하면 사고가 날 수 있습니다.</p>
+  <div class="tw"><table>
+    <thead><tr><th>함정</th><th>설명</th><th>대응</th></tr></thead>
+    <tbody>
+      <tr><td><strong>행동이냐 문의냐</strong></td><td>“변경도 지금 돼?”는 바꿔 달라는 요청일 수도, 가능한지 묻는 질문일 수도 있음</td><td>의도마다 <code>mode: action | inquiry</code>를 붙여 추출</td></tr>
+      <tr><td><strong>의존성</strong></td><td>이번 주문의 배송지라면 주소를 먼저 확정해야 결제할 수 있음</td><td>할 일 사이를 DAG(선후관계 그래프)로 관리. 독립적인 일만 병렬 실행</td></tr>
+      <tr><td><strong>되돌릴 수 없음</strong></td><td>결제는 취소가 어려움</td><td>결제 직전에 <code>interrupt</code>로 사용자 확인(HITL)</td></tr>
+      <tr><td><strong>모호함</strong></td><td>이번 주문 배송지인지, 기본 배송지인지 불분명함</td><td>슬롯 채우기 후속 질문</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="patterns">
+  <h2><span class="n">03</span>사용한 패턴</h2>
+  <p class="sub"><a href="https://docs.langchain.com/oss/python/langchain/multi-agent#patterns">LangChain 문서의 5가지 패턴</a>에 대응시킨 결과입니다. 바깥 틀은 <strong>Custom workflow</strong>, 핵심은 <strong>Router</strong>입니다.</p>
+  <div class="tw"><table>
+    <thead><tr><th>패턴</th><th>기획안의 해당 부분</th><th>적용</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Custom workflow</strong></td><td>전체 <code>StateGraph</code>. 정해진 순서로 도는 로직(DAG planner, HITL, 규칙 기반 후속 질문)과 LLM 판단이 섞여 있음</td><td><span class="pill p-ok">바깥 틀</span></td></tr>
+      <tr><td><strong>Router</strong></td><td><code>intent_extractor</code> → <code>Send()</code> 병렬 분배 → 도메인 worker → <code>aggregator</code> 합성</td><td><span class="pill p-ok">핵심</span></td></tr>
+      <tr><td><strong>Skills (변형)</strong></td><td><code>tools_for(intent)</code>: 의도에 맞는 MCP 도구만 그때그때 붙임. 다만 대화 기록에 쌓지 않고 worker마다 따로 둠</td><td><span class="pill p-warn">비슷함</span></td></tr>
+      <tr><td><strong>Handoffs (변형)</strong></td><td><code>task_stack</code>의 상태(blocked, awaiting_confirm)가 다음 턴의 처리 경로를 정함</td><td><span class="pill p-warn">일부</span></td></tr>
+      <tr><td><strong>Subagents</strong></td><td>판단과 조사가 필요한 의도에만 supervisor 노드 안에서 사용 (<a href="#subagents">08 참고</a>)</td><td><span class="pill p-acc">선택 적용</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>문서의 패턴 비교 수치</h3>
+  <div class="tw"><table>
+    <thead><tr><th>패턴</th><th class="num">분산 개발</th><th class="num">병렬화</th><th class="num">Multi-hop</th><th class="num">사용자 직접 상호작용</th><th class="num">같은 요청 반복 (2턴 호출 수)</th></tr></thead>
+    <tbody>
+      <tr><td>Subagents</td><td class="num">5</td><td class="num">5</td><td class="num">5</td><td class="num">1</td><td class="num">8</td></tr>
+      <tr><td>Handoffs</td><td class="num">–</td><td class="num">–</td><td class="num">5</td><td class="num">5</td><td class="num">5</td></tr>
+      <tr><td>Skills</td><td class="num">5</td><td class="num">3</td><td class="num">5</td><td class="num">5</td><td class="num">5</td></tr>
+      <tr><td>Router</td><td class="num">3</td><td class="num">5</td><td class="num">–</td><td class="num">3</td><td class="num">6</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout ok"><b>Router의 약점을 이렇게 보완합니다</b>
+  같은 요청 반복 비용(6회): 후속 질문 칩이 구조화된 명령(payload)으로 다시 들어가 <code>intent_extractor</code>를 건너뜁니다.<br>
+  Multi-hop 미평가: DAG planner가 선후관계를 처리합니다.<br>
+  사용자 직접 상호작용(3점): <code>followup_generator</code>와 <code>interrupt</code>가 채웁니다.</div>
+</section>
+
+<section id="arch">
+  <h2><span class="n">04</span>아키텍처</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart TD
+  U[사용자 입력 / 칩 payload] --> IE[① intent_extractor<br/>Intent: intent·mode·entities·depends_on]
+  U -. 칩 payload는 추출 생략 .-> SM
+  IE --> SM[② stack_merger<br/>기존 task_stack과 합치고 지시어 해석]
+  SM --> PL[③ planner<br/>DAG 구성 → ready / blocked]
+  PL -->|Send 병렬| W1[④ simple_worker<br/>결제 MCP]
+  PL -->|Send 병렬| W2[④ simple_worker<br/>회원·배송 MCP]
+  PL -->|판단·조사형 의도| SV[④ supervisor_agent<br/>Subagents as tools]
+  W1 --> HITL{risk = high?}
+  HITL -->|예| INT[interrupt<br/>사용자 확인]
+  INT --> AG
+  HITL -->|아니오| AG
+  W2 --> AG[⑤ aggregator<br/>결과 합성 + 스택 갱신]
+  SV --> AG
+  AG --> FG[⑥ followup_generator<br/>규칙 A·B·E + LLM C·D]
+  FG --> R[답변 + 후속 질문 칩]
+  </pre></div>
+  <div class="tw"><table>
+    <thead><tr><th>노드</th><th>역할</th><th>구현</th></tr></thead>
+    <tbody>
+      <tr><td>① intent_extractor</td><td>여러 의도와 엔티티 추출, action/inquiry 구분</td><td><code>with_structured_output(IntentResult)</code></td></tr>
+      <tr><td>② stack_merger</td><td>기존 작업과 합치기, “아까 그거” 해석</td><td><code>entity_memory</code> 조회</td></tr>
+      <tr><td>③ planner</td><td>의존성 DAG 구성, 실행 가능한 일 선별</td><td>정해진 순서로 도는 로직 + 슬롯 검증</td></tr>
+      <tr><td>④ worker</td><td>의도별 MCP 도구 실행</td><td><code>MultiServerMCPClient</code>, 동적 도구 바인딩</td></tr>
+      <tr><td>⑤ aggregator</td><td>결과를 합쳐 하나의 답변으로, 상태 전이</td><td>id 기준 merge reducer</td></tr>
+      <tr><td>⑥ followup_generator</td><td>후속 질문 1~3개 생성</td><td>규칙 + LLM 혼합</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="state">
+  <h2><span class="n">05</span>상태 스키마</h2>
+<pre><code>class Task(TypedDict):
+    id: str
+    intent: str                   # order_product, change_shipping_address ...
+    mode: Literal["action", "inquiry"]
+    slots: dict                   # 채워진 엔티티
+    missing: list[str]            # 비어 있는 필수 슬롯
+    depends_on: list[str]
+    risk: Literal["low", "high"]  # high = 결제·취소 → HITL 필요
+    status: Literal["pending", "blocked", "awaiting_confirm",
+                    "running", "done", "failed"]
+    result: dict | None
+
+class FollowUp(TypedDict):
+    label: str                    # 칩에 보일 문구
+    type: Literal["slot", "confirm", "convert", "next", "recover"]
+    payload: dict                 # 칩을 누르면 그래프로 다시 들어가는 구조화된 명령
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    task_stack: Annotated[list[Task], merge_by_id]   # 턴이 바뀌어도 유지, 병렬 갱신에 안전
+    entity_memory: dict           # 최근 엔티티 (지시어 해석용)
+    followups: list[FollowUp]</code></pre>
+</section>
+
+<section id="followups">
+  <h2><span class="n">06</span>Follow-ups 분류</h2>
+  <div class="tw"><table>
+    <thead><tr><th>유형</th><th>생성 조건</th><th>예시</th><th>생성 방식</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill p-crit">E 복구</span></td><td>status = failed</td><td>“카드 승인이 거절됐어요. 다른 결제수단으로 할까요?”</td><td>규칙</td></tr>
+      <tr><td><span class="pill p-crit">B 실행 확인</span></td><td>risk = high, awaiting_confirm</td><td>“후드티 L / 블랙, 39,000원을 결제할까요?”</td><td>규칙</td></tr>
+      <tr><td><span class="pill p-warn">A 슬롯 채우기</span></td><td>missing이 비어 있지 않음</td><td>“이번 주문 배송지를 바꿀까요, 기본 배송지를 바꿀까요?”</td><td>규칙</td></tr>
+      <tr><td><span class="pill p-acc">C 문의→행동 전환</span></td><td>inquiry의 답이 “가능함”</td><td>“지금 변경 가능해요. 바로 바꿔 드릴까요?”</td><td>LLM</td></tr>
+      <tr><td><span class="pill p-ok">D 다음 단계</span></td><td>status = done</td><td>“배송 추적 알림 받으실래요?”</td><td>LLM</td></tr>
+    </tbody>
+  </table></div>
+  <h3>노출 규칙</h3>
+  <ul>
+    <li>우선순위는 <strong>E &gt; B &gt; A &gt; C &gt; D</strong>이고, 한 번에 최대 3개까지 보여 줍니다.</li>
+    <li>막힌 일(A·B·E)이 있으면 D 유형은 숨깁니다. 사용자의 주의를 막힌 일에 모으기 위해서입니다.</li>
+    <li>A·B·E는 반드시 나와야 하는 질문이라 LLM에 맡기지 않고 규칙으로 만듭니다.</li>
+    <li>칩을 누르면 자연어가 아니라 <code>payload</code>로 그래프에 다시 들어갑니다. 의도를 다시 추출하는 비용과 오분류를 함께 줄일 수 있습니다.</li>
+  </ul>
+</section>
+
+<section id="flow">
+  <h2><span class="n">07</span>대화 예시</h2>
+  <div class="turns">
+    <div class="turn"><div class="t">1턴</div><div>
+      <div class="u">“아까 물어본 후드티 결제하고, 아참 배송지 변경도 지금 돼?”</div>
+      <pre><code>T1 order_product          action  risk=high  product=hoodie#123 (entity_memory)
+T2 change_shipping_address inquiry scope=?
+planner → T2 조회는 바로 실행 / T1은 T2의 scope가 정해질 때까지 blocked</code></pre>
+      <div class="b">봇: 후드티(L/블랙) 결제를 준비했어요. 배송지는 지금 바로 바꿀 수 있어요.</div>
+      <div class="chips"><span class="fchip">이번 주문 배송지 변경</span><span class="fchip">기본 배송지 변경</span><span class="fchip">기존 주소로 결제</span></div>
+    </div></div>
+    <div class="turn"><div class="t">2턴</div><div>
+      <div class="u">[이번 주문 배송지 변경]을 누르고 새 주소 입력</div>
+      <div class="b"><code>update_address</code> 실행 → T1 blocked 해제 → <code>interrupt</code><br>봇: 서울시 ○○구로 배송, 39,000원을 결제할까요?</div>
+      <div class="chips"><span class="fchip">결제</span><span class="fchip">취소</span></div>
+    </div></div>
+    <div class="turn"><div class="t">3턴</div><div>
+      <div class="u">[결제]</div>
+      <div class="b"><code>checkout_item(idempotency_key=T1)</code> → 완료<br>봇: 결제 완료! 내일 도착 예정이에요.</div>
+      <div class="chips"><span class="fchip">배송 알림 받기</span><span class="fchip">다른 상품 보기</span></div>
+    </div></div>
+  </div>
+</section>
+
+<section id="subagents">
+  <h2><span class="n">08</span>Subagents 적용 지점</h2>
+  <div class="thesis"><p>Router는 분류하는 순간에 계획이 정해지고, Subagents는 <strong>중간 결과를 본 뒤에</strong> 다음 계획이 정해집니다.</p></div>
+  <p>단순 실행형 의도(결제, 주소 변경)에 Subagents를 쓰면 요청마다 호출이 1회 늘어 손해입니다(문서 기준 4회 대 3회). 아래 세 신호 가운데 하나라도 해당할 때만 씁니다.</p>
+  <div class="tw"><table>
+    <thead><tr><th>신호</th><th>의미</th></tr></thead>
+    <tbody>
+      <tr><td>① 동적인 다단계 처리</td><td>앞 단계 결과를 보고 나서야 다음에 누구를 부를지 정해짐</td></tr>
+      <tr><td>② 컨텍스트 격리</td><td>하위 작업이 큰 컨텍스트(약관 전문, 리뷰 수백 건)를 소비하는데 메인에는 결론만 필요함</td></tr>
+      <tr><td>③ 하위 작업 자체가 에이전트 루프</td><td>도구 호출이 3회 이상이고 그 순서를 스스로 판단해야 함</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="grid2">
+    <div class="card"><h4>교환·환불 의사결정</h4><div class="sig">신호 ① ②</div>
+      <p>“사이즈 안 맞는데 교환이 나아 환불이 나아? 쿠폰은?” 주문 조회 결과를 보고 정책 확인을, 정책 결과를 보고 금액 비교를 할지 정합니다. 약관 20K 토큰은 policy_agent 안에서만 소비하고 결론 한 줄만 올립니다.</p></div>
+    <div class="card"><h4>조건부 상품 비교</h4><div class="sig">신호 ② ③ · 동적 병렬</div>
+      <p>“영하 5도 패딩, 10만 원 이하 3개 비교.” 후보 수는 검색 결과를 봐야 알 수 있습니다. 후보마다 review_agent가 리뷰 300건을 분석해 요약만 반환합니다.</p></div>
+    <div class="card"><h4>배송 사고 조사</h4><div class="sig">신호 ① ③</div>
+      <p>“배송 완료인데 안 왔어요.” 택배사 API, GPS·사진, 창고 WMS, 이웃 배송 이력을 차례로 확인합니다. 몇 단계에서 끝날지 미리 알 수 없는 조사 루프입니다.</p></div>
+    <div class="card"><h4>팀별 에이전트 소유</h4><div class="sig">분산 개발 (문서 평가 5점)</div>
+      <p>결제팀, 물류팀, CS팀이 각자 에이전트를 배포합니다. 메인 에이전트와의 경계는 도구 계약(입력/출력 스키마) 하나로 좁혀집니다.</p></div>
+  </div>
+
+  <h3>Subagents와 Follow-ups를 함께 쓸 때</h3>
+  <p>문서 평가에서 Subagents의 사용자 직접 상호작용은 <strong>1점</strong>입니다. subagent는 사용자에게 직접 묻지 못합니다. 그래서 질문과 위험한 실행을 직접 하지 않고, 결과 객체에 담아 반환만 합니다.</p>
+<pre><code>class SubagentResult(BaseModel):
+    summary: str
+    data: dict
+    needs_input: list[str] = []        # 물어볼 것 → main → followup_generator
+    proposed_actions: list[dict] = []  # 실행 제안 → main이 위험도 판단 후 interrupt</code></pre>
+  <div class="callout ok"><b>원칙</b>질문과 확인은 항상 메인 그래프의 <code>followup_generator</code>와 <code>interrupt</code>가 맡습니다. 그래야 사용자 경험과 안전장치가 한곳에서 일관되게 관리됩니다.</div>
+</section>
+
+<section id="impl">
+  <h2><span class="n">09</span>구현 골격</h2>
+<pre><code>from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send, interrupt
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain.agents import create_agent
+from langchain.tools import tool
+
+mcp = MultiServerMCPClient({
+    "payment": {"url": "http://payment-mcp/mcp", "transport": "streamable_http"},
+    "member":  {"url": "http://member-mcp/mcp",  "transport": "streamable_http"},
+})
+
+SUPERVISED = {"exchange_or_refund", "delivery_incident", "product_compare"}
+
+def fan_out(state):
+    ready = [t for t in state["task_stack"]
+             if t["status"] == "pending" and deps_done(t, state)]
+    if not ready:
+        return "aggregator"
+    return [Send("supervisor_agent" if t["intent"] in SUPERVISED else "simple_worker",
+                 {"task": t}) for t in ready]
+
+async def simple_worker(payload):
+    task = payload["task"]
+    if task["risk"] == "high":
+        ok = interrupt({"type": "confirm", "task": task})   # 사용자 확인 대기
+        if not ok:
+            return {"task_stack": [cancel(task)]}
+    tools = await tools_for(task["intent"])                  # 동적 도구 바인딩
+    ...  # idempotency_key=task["id"]
+
+# Subagents: 판단·조사형 의도 전용
+policy_agent = create_agent(model, tools=policy_rag_tools, system_prompt="약관 해석 전문가 ...")
+
+@tool
+def ask_policy(question: str) -&gt; str:
+    """반품·교환·쿠폰 약관 해석. 결론과 근거 조항만 반환."""
+    r = policy_agent.invoke({"messages": [{"role": "user", "content": question}]})
+    return r["messages"][-1].content       # 격리: 최종 답만 메인으로 올림
+
+supervisor = create_agent(model, tools=[ask_order, ask_policy, ask_pricing],
+                          response_format=SubagentResult)
+
+g = StateGraph(State)
+for name, fn in [("intent_extractor", extract), ("stack_merger", merge),
+                 ("planner", plan), ("simple_worker", simple_worker),
+                 ("supervisor_agent", run_supervisor), ("aggregator", aggregate),
+                 ("followup_generator", gen_followups)]:
+    g.add_node(name, fn)
+g.add_conditional_edges(START, entry_route, ["intent_extractor", "stack_merger"])  # 칩 payload면 추출 생략
+g.add_edge("intent_extractor", "stack_merger")
+g.add_edge("stack_merger", "planner")
+g.add_conditional_edges("planner", fan_out,
+                        ["simple_worker", "supervisor_agent", "aggregator"])
+g.add_edge("simple_worker", "aggregator")
+g.add_edge("supervisor_agent", "aggregator")
+g.add_edge("aggregator", "followup_generator")
+g.add_edge("followup_generator", END)
+app = g.compile(checkpointer=PostgresSaver(...))   # 턴 사이에 스택 유지, interrupt 재개</code></pre>
+  <h3>구현 포인트</h3>
+  <ul>
+    <li><strong>동적 컨텍스트:</strong> 의도에 맞는 MCP 서버의 도구만 LLM에 바인딩합니다. 도구가 많아질수록 오호출이 줄어드는 효과가 큽니다.</li>
+    <li><strong>병렬 갱신:</strong> worker들이 동시에 <code>task_stack</code>을 갱신하므로 id 기준으로 merge하는 커스텀 reducer가 필요합니다.</li>
+    <li><strong>멱등성:</strong> 결제 도구에는 <code>idempotency_key=task.id</code>를 넘깁니다. 재시도나 interrupt 재개 때 이중 결제를 막습니다.</li>
+  </ul>
+</section>
+
+<section id="kpi">
+  <h2><span class="n">10</span>성공 지표</h2>
+  <div class="tw"><table>
+    <thead><tr><th>지표</th><th>의미</th><th>목표</th></tr></thead>
+    <tbody>
+      <tr><td>복합 의도 인식 정확도</td><td>의도 개수와 mode를 모두 맞춘 비율</td><td>평가셋 기준으로 설정</td></tr>
+      <tr><td>후속 질문 클릭률 (유형별)</td><td>D 유형이 낮으면 노이즈라는 신호</td><td>유형별로 추적</td></tr>
+      <tr><td>작업 완료까지 걸린 턴 수</td><td>칩 payload 방식의 효과</td><td>기준선 대비 감소</td></tr>
+      <tr><td>잘못 실행된 위험 행동</td><td>HITL을 우회한 결제·취소</td><td><span class="pill p-crit">0건</span></td></tr>
+      <tr><td>맥락 지시어 해석 성공률</td><td>“아까 그거”를 올바르게 해석한 비율</td><td>평가셋 기준으로 설정</td></tr>
+      <tr><td>Subagent 호출당 비용</td><td>supervisor 경로의 토큰·지연</td><td>단순 경로와 분리해 측정</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="roadmap">
+  <h2><span class="n">11</span>로드맵</h2>
+  <div class="tw"><table>
+    <thead><tr><th>단계</th><th>범위</th><th>완료 기준</th></tr></thead>
+    <tbody>
+      <tr><td><strong>1. MVP</strong></td><td>의도 추출(action/inquiry), 단일 MCP, A·B 유형 후속 질문, checkpointer</td><td>후드티 시나리오 3턴이 끝까지 동작</td></tr>
+      <tr><td><strong>2. 병렬화</strong></td><td>DAG planner, <code>Send</code> 팬아웃, 멀티 MCP, 동적 도구 바인딩</td><td>독립 의도 2개를 병렬 처리, 의존 의도는 순서대로 처리</td></tr>
+      <tr><td><strong>3. 고도화</strong></td><td>C·D·E 유형, 칩 payload 재진입, LangSmith 평가셋 회귀 테스트</td><td>지표 대시보드 운영</td></tr>
+      <tr><td><strong>4. Subagents</strong></td><td>supervisor 노드, 교환·환불 / 배송 사고 / 상품 비교, <code>SubagentResult</code> 계약</td><td>판단형 의도의 완결률을 단순 경로와 비교</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="risks">
+  <h2><span class="n">12</span>리스크와 대응</h2>
+  <div class="tw"><table>
+    <thead><tr><th>리스크</th><th>영향</th><th>대응</th></tr></thead>
+    <tbody>
+      <tr><td>action과 inquiry를 잘못 분류</td><td><span class="pill p-crit">높음</span> 의도하지 않은 실행</td><td>모호하면 inquiry로 처리, 위험 행동은 반드시 확인</td></tr>
+      <tr><td>병렬 갱신 충돌</td><td><span class="pill p-warn">중간</span> 스택 상태 꼬임</td><td>id 기준 merge reducer, 상태 전이 검증</td></tr>
+      <tr><td>후속 질문 과다</td><td><span class="pill p-warn">중간</span> 피로감, 클릭률 하락</td><td>최대 3개, 막힌 일이 있으면 D 숨김</td></tr>
+      <tr><td>Subagent 비용 증가</td><td><span class="pill p-warn">중간</span> 지연·토큰 증가</td><td>판단형 의도에만 적용, 경로별 비용 분리 측정</td></tr>
+      <tr><td>오래된 맥락 해석 오류</td><td><span class="pill p-warn">중간</span> 엉뚱한 상품 결제</td><td>entity_memory TTL, 결제 확인 문구에 상품·옵션 명시</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer>참고: <a href="https://docs.langchain.com/oss/python/langchain/multi-agent#patterns">LangChain Multi-agent Patterns</a> · 문서의 패턴 비교 수치는 원문의 평가표와 모델 호출 수를 그대로 옮긴 것입니다.</footer>
+</main>
+</div>
+
+</html>
