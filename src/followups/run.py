@@ -164,7 +164,7 @@ async def main(names: list[str]):
                 results.append({"scenario": n, "error": repr(e)})
     lf.flush()
     out = RUNS / f"run-{time.strftime('%H%M%S')}.json"
-    out.write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str))
+    out.write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print(f"\n결과 저장: {out}")
     passed = sum(1 for r in results if r.get("expect", {}).get("ok"))
     print(f"합계: {passed}/{len(results)} PASS")

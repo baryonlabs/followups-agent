@@ -5,3 +5,4 @@ infra/.env
 data/*.json
 runs/
 __pycache__/
+data/*.lock
