@@ -150,7 +150,27 @@ def build_graph(box: Toolbox, checkpointer=None):
         # 근거 없는 값(사용자가 고르지 않은 DB 출처, 말하지 않은 배송지 범위 등)은 규칙으로 지운다
         text = _last_user_text(state)
         intents = [i.model_copy(update={"slots": Slots(**drop_ungrounded(i.slots.model_dump(), text))}) for i in intents]
+        intents = _ensure_attachment_intents(intents, state)
         return {"extracted": [i.model_dump() for i in intents]}
+
+    def _ensure_attachment_intents(intents, state):
+        """이번 턴에 들어온 첨부는 모델이 의도로 안 뽑아도 해석 작업을 만든다 (복합 발화에서 작은 모델이 빠뜨림)."""
+        from followups.state import ExtractedIntent
+
+        turn = state.get("turn", 0)
+        new_ids = [k for k, v in (state.get("attachments") or {}).items() if v.get("turn") == turn]
+        covered = {i.slots.attachment_id for i in intents if i.intent == "attachment_analysis"}
+        extra = [ExtractedIntent(intent="attachment_analysis", mode="action", span="(첨부 이미지)",
+                                 slots=Slots(attachment_id=a)) for a in new_ids if a not in covered]
+        if extra and any(i.intent == "attachment_analysis" for i in intents):
+            # 모델이 id 없이 만든 해석 의도가 있으면 그 자리에 id를 채운다
+            fixed = []
+            for i in intents:
+                if i.intent == "attachment_analysis" and not i.slots.attachment_id and extra:
+                    i = i.model_copy(update={"slots": i.slots.model_copy(update={"attachment_id": extra.pop(0).slots.attachment_id})})
+                fixed.append(i)
+            intents = fixed
+        return [*extra, *intents]
 
     async def _fill_slots(ex, sys, recent, config):
         names = INTENT_SLOTS.get(ex.intent, [])

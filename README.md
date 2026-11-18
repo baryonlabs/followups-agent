@@ -39,9 +39,15 @@ uv run pytest -q                     # 153개, LLM 없이 (그래프 통합 흐�
 uv run python -m followups.run       # 실제 LLM 시나리오 14개 (src/followups/scenarios/*)
 ```
 
-LLM 엔드포인트는 환경변수로 바꿉니다. 내부 OpenAI 호환 서버(사내 Solar API, vLLM 등)를 쓰려면 `.env`에 `LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_MAIN`, `MODEL_FAST`를 넣습니다. OpenRouter가 아니면 2단계 추출이 자동으로 켜집니다(`TWO_STAGE_EXTRACT`). 이미지 판독은 `LLM_VISION_BASE_URL` / `MODEL_VISION`으로 VLM을 따로 지정합니다.
+LLM 엔드포인트는 환경변수로 바꿉니다. 내부 OpenAI 호환 서버(사내 Solar API, vLLM 등)를 쓰려면 `.env`에 `LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_MAIN`, `MODEL_FAST`를 넣습니다. OpenRouter가 아니면 2단계 추출이 자동으로 켜집니다(`TWO_STAGE_EXTRACT`).
 
-내부 Solar(`solar-pro4-1.1.0`) 실측: 시나리오 14개 중 12개 통과. 실패 2개(`mapo_report`, `chart_only`)는 이 모델이 이미지 입력을 받지 않기 때문입니다.
+이미지 판독은 두 방식입니다 (`ATTACHMENT_READER`).
+- `docparse` (OpenRouter가 아니면 기본값): 같은 서버의 Upstage Document Parse(`DOCPARSE_URL`, 기본 `LLM_BASE_URL` + `/document-parse`)로 OCR. 차트는 표로 복원되고, 텍스트 LLM이 사실 JSON으로 구조화합니다. 이미지 입력을 받지 않는 모델에서도 동작합니다.
+- `vlm`: `LLM_VISION_BASE_URL` / `MODEL_VISION`의 이미지 입력 모델에 직접 보냅니다.
+
+복합 발화에서 작은 모델이 첨부 해석 의도를 빠뜨려도, 이번 턴에 들어온 첨부에는 규칙으로 해석 작업을 붙입니다.
+
+내부 Solar(`solar-pro4-1.1.0`) 실측: 시나리오 14개 모두 통과 (2026-11-19, 이미지는 docparse 경로).
 
 ## 케이스별 검증
 
