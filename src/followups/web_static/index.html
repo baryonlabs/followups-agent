@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>구조적 멀티턴 데모</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#1b1f24; --muted:#667085; --line:#e4e7ec;
+  --accent:#2f6fed; --accent-ink:#fff; --user:#eaf1ff; --bot:#ffffff;
+  --ok:#1a7f4b; --warn:#b54708; --bad:#c0362c; --chip:#f1f4f9;
+  --s-done:#e7f6ee; --s-blocked:#fff4e5; --s-pending:#eef2ff; --s-failed:#fdecea; --s-cancelled:#f2f4f7; --s-awaiting:#f4ecff;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f1216; --panel:#171b21; --ink:#e6e9ef; --muted:#98a2b3; --line:#2a313b;
+  --accent:#5b8cff; --accent-ink:#0b0d10; --user:#1d2a44; --bot:#1b2028; --chip:#222933;
+  --ok:#5fd39a; --warn:#f5b75c; --bad:#ff8a80;
+  --s-done:#143323; --s-blocked:#3a2a12; --s-pending:#1e2547; --s-failed:#3d1a18; --s-cancelled:#23272e; --s-awaiting:#2d2142;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 "Pretendard","Malgun Gothic",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:15px;margin:0;font-weight:650}
+header .meta{color:var(--muted);font-size:12px}
+header button{margin-left:auto}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:6px 12px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);height:calc(100vh - 53px)}
+@media (max-width:900px){ main{grid-template-columns:1fr;height:auto} #side{border-left:0;border-top:1px solid var(--line)} #log{min-height:55vh} }
+#chat{display:flex;flex-direction:column;min-height:0}
+#log{flex:1;overflow:auto;padding:16px}
+.msg{max-width:88%;margin:0 0 10px;padding:9px 12px;border-radius:12px;border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.msg.user{margin-left:auto;background:var(--user);border-color:transparent}
+.msg.bot{background:var(--bot)}
+.msg.err{border-color:var(--bad);color:var(--bad)}
+.msg img{max-width:220px;display:block;border-radius:8px;margin-top:6px}
+.msg .t{display:block;color:var(--muted);font-size:11px;margin-top:4px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 14px}
+.chip{background:var(--chip);border-radius:999px;padding:5px 12px;font-size:13px}
+.chip[data-type=confirm]{border-color:var(--accent);color:var(--accent)}
+.chip[data-type=recover]{border-color:var(--bad);color:var(--bad)}
+.chip[data-type=policy]{border-color:var(--warn);color:var(--warn)}
+.chip small{color:var(--muted);margin-left:4px;font-size:11px}
+#samples{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 8px}
+#samples button{font-size:12px;padding:4px 10px;border-radius:999px;color:var(--muted)}
+form{display:flex;gap:8px;padding:10px 16px 14px;border-top:1px solid var(--line);background:var(--panel);align-items:center}
+form input[type=text]{flex:1;min-width:0;font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+#attach-preview{font-size:12px;color:var(--muted)}
+#side{border-left:1px solid var(--line);overflow:auto;padding:14px 16px;background:var(--panel)}
+#side h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:16px 0 8px}
+#side h2:first-child{margin-top:0}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:6px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+.st{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px}
+.st.done{background:var(--s-done)} .st.blocked{background:var(--s-blocked)} .st.pending,.st.running{background:var(--s-pending)}
+.st.failed{background:var(--s-failed)} .st.cancelled{background:var(--s-cancelled)} .st.awaiting_confirm{background:var(--s-awaiting)}
+code,pre{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;max-height:240px;margin:0}
+.muted{color:var(--muted)}
+details{margin-top:4px} summary{cursor:pointer;color:var(--muted);font-size:12px}
+.tag{display:inline-block;font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:5px;margin:1px 2px 1px 0;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>구조적 멀티턴 데모</h1>
+  <span class="meta" id="meta">스레드 -</span>
+  <button id="reset" type="button">새 대화</button>
+</header>
+<main>
+  <section id="chat">
+    <div id="log"></div>
+    <div id="samples"></div>
+    <form id="f">
+      <input type="file" id="file" accept="image/*" hidden>
+      <button type="button" id="pick" title="이미지 첨부">이미지</button>
+      <button type="button" id="sample-img" title="마포구 매출 차트 첨부">샘플 차트</button>
+      <span id="attach-preview"></span>
+      <input type="text" id="q" placeholder="메시지를 입력하세요" autocomplete="off">
+      <button class="primary" id="send">보내기</button>
+    </form>
+  </section>
+  <aside id="side">
+    <h2>작업 스택</h2>
+    <div id="tasks" class="muted">아직 작업이 없습니다.</div>
+    <h2>첨부 사실</h2>
+    <div id="atts" class="muted">없음</div>
+    <h2>장기 메모리 (확정 선호)</h2>
+    <div id="profile" class="muted">없음</div>
+    <h2>정책 판정 기록</h2>
+    <div id="flags" class="muted">없음</div>
+  </aside>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let thread = null, image = null, busy = false;
+const SAMPLES = [
+  "4월에 왜 떨어졌는지, 같은 기간 업종별 점포 수 DB에서 뽑아서 3분기 보고서 톤으로 정리해줘",
+  "마포구 업종별 점포 수 보여줘",
+  "구별로도 나눠줘",
+  "앞으로 숫자는 반올림하지 말고 소수점 둘째 자리까지 보여줘",
+  "대표자 주민번호랑 같이 명단 뽑아줘",
+  "후드티 블랙 L 재고 있어?",
+  "지난달 산 후드티 교환이 나아 환불이 나아?",
+];
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+
+function addMsg(cls, text, extra){
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.textContent = text;
+  if (extra) d.insertAdjacentHTML("beforeend", extra);
+  $("#log").appendChild(d); $("#log").scrollTop = 1e9;
+  return d;
+}
+function addChips(chips){
+  $("#log").querySelectorAll(".chips button").forEach(b => b.disabled = true);
+  if (!chips?.length) return;
+  const w = document.createElement("div"); w.className = "chips";
+  chips.forEach(c => {
+    const b = document.createElement("button");
+    b.className = "chip"; b.dataset.type = c.type; b.type = "button";
+    b.innerHTML = esc(c.label) + `<small>${esc(c.type)}</small>`;
+    b.onclick = () => send({chip: c});
+    w.appendChild(b);
+  });
+  $("#log").appendChild(w); $("#log").scrollTop = 1e9;
+}
+function renderSide(r){
+  const t = r.tasks || [];
+  $("#tasks").innerHTML = !t.length ? "아직 작업이 없습니다." : `<table><tr><th>id</th><th>의도</th><th>상태</th><th>빈칸 · 의존</th></tr>` +
+    t.map(x => `<tr><td><code>${esc(x.id)}</code></td><td>${esc(x.intent)}<br><span class="muted">${esc(x.route)} · 턴 ${x.turn ?? "-"}</span></td>
+      <td><span class="st ${esc(x.status)}">${esc(x.status)}</span>${x.phase ? `<br><span class="muted">${esc(x.phase)}</span>` : ""}${x.error ? `<br><span class="muted">${esc(x.error)}</span>` : ""}</td>
+      <td>${(x.missing||[]).map(m => `<span class="tag">빈칸 ${esc(m)}</span>`).join("")}${(x.depends_on||[]).map(m => `<span class="tag">← ${esc(m)}</span>`).join("")}
+      <details><summary>슬롯 · 지침 · 결과</summary><pre>${esc(JSON.stringify({slots:x.slots, guidelines:x.guidelines, sql:(r.sql||{})[x.id], result:(r.results||{})[x.id]}, null, 1))}</pre></details></td></tr>`).join("") + "</table>";
+  const a = r.attachments || {};
+  $("#atts").innerHTML = Object.keys(a).length ? Object.entries(a).map(([k,v]) => `<details open><summary><code>${esc(k)}</code> ${esc(v.kind)}</summary><pre>${esc(JSON.stringify(v.facts, null, 1))}</pre></details>`).join("") : "없음";
+  const p = r.profile || {};
+  $("#profile").innerHTML = Object.keys(p).length ? `<pre>${esc(JSON.stringify(p, null, 1))}</pre>` : "없음";
+  const f = r.policy_flags || [];
+  $("#flags").innerHTML = f.length ? `<pre>${esc(JSON.stringify(f, null, 1))}</pre>` : "없음";
+  $("#meta").textContent = `스레드 ${thread} · 턴 ${r.turn ?? 0}`;
+}
+async function send(body){
+  if (busy) return;
+  busy = true; $("#send").disabled = true;
+  if (body.chip) addMsg("user", (body.chip.payload.op === "say" ? body.chip.payload.text : "[칩] " + body.chip.label));
+  else addMsg("user", body.text || "", body.image ? `<img src="${body.image}" alt="첨부 이미지">` : "");
+  const wait = addMsg("bot", "생각 중…");
+  try {
+    const res = await fetch("/api/turn", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({...body, thread_id: thread})});
+    const r = await res.json();
+    thread = r.thread_id;
+    wait.remove();
+    if (r.error) { addMsg("bot err", (r.hint ? r.hint + "\n" : "") + r.error); addChips([]); }
+    else { addMsg("bot", r.answer || "(빈 답변)", `<span class="t">${r.seconds}s${r.interrupt ? " · 확인 대기" : ""}</span>`); addChips(r.chips); }
+    renderSide(r);
+  } catch (e) { wait.remove(); addMsg("bot err", String(e)); }
+  busy = false; $("#send").disabled = false; $("#q").focus();
+}
+$("#f").onsubmit = e => {
+  e.preventDefault();
+  const text = $("#q").value.trim();
+  if (!text && !image) return;
+  send({text, image}); $("#q").value = ""; image = null; $("#attach-preview").textContent = "";
+};
+$("#pick").onclick = () => $("#file").click();
+$("#file").onchange = () => {
+  const f = $("#file").files[0]; if (!f) return;
+  const rd = new FileReader(); rd.onload = () => { image = rd.result; $("#attach-preview").textContent = "📎 " + f.name; }; rd.readAsDataURL(f);
+};
+$("#sample-img").onclick = async () => {
+  const b = await (await fetch("/api/sample-image")).blob();
+  const rd = new FileReader(); rd.onload = () => { image = rd.result; $("#attach-preview").textContent = "📎 마포구 매출 차트"; $("#q").focus(); }; rd.readAsDataURL(b);
+};
+$("#reset").onclick = async () => {
+  const r = await (await fetch("/api/reset", {method:"POST"})).json();
+  thread = r.thread_id; $("#log").innerHTML = ""; renderSide({tasks:[], turn:0});
+};
+SAMPLES.forEach(s => { const b = document.createElement("button"); b.type = "button"; b.textContent = s; b.onclick = () => { $("#q").value = s; $("#q").focus(); }; $("#samples").appendChild(b); });
+$("#reset").click();
+</script>
+</body>
+</html>

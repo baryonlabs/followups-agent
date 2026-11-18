@@ -5,3 +5,7 @@ infra/.env
 data/*.json
 runs/
 __pycache__/
+data/*.lock
+data/*.sqlite*
+data/attachments/uploads/
+.env.bak*

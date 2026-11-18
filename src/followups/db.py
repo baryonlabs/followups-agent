@@ -2,16 +2,53 @@
 from __future__ import annotations
 
 import copy
-import fcntl
 import json
 import os
+import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
+
+if sys.platform == "win32":
+    import msvcrt
+
+    @contextmanager
+    def _lock(p: Path, write: bool):
+        # Windows: fcntl 없음 -> 별도 .lock 파일의 첫 바이트를 배타 잠금 (공유 잠금 미지원)
+        lf = open(p.with_suffix(p.suffix + ".lock"), "a+b")
+        try:
+            while True:
+                try:
+                    lf.seek(0)
+                    msvcrt.locking(lf.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.01)
+            try:
+                yield
+            finally:
+                lf.seek(0)
+                msvcrt.locking(lf.fileno(), msvcrt.LK_UNLCK, 1)
+        finally:
+            lf.close()
+else:
+    import fcntl
+
+    @contextmanager
+    def _lock(p: Path, write: bool):
+        with open(p.with_suffix(p.suffix + ".lock"), "a+b") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+            try:
+                yield
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.getenv("FOLLOWUPS_DATA_DIR", ROOT / "data"))
 
 SEED: dict[str, dict] = {
+    # 장기 사용자 메모리 (서비스에서는 Postgres user_profile 테이블). 확정된 선호만 둔다
+    "profile": {"users": {}},
     "member": {
         "users": {
             "u1": {
@@ -67,7 +104,7 @@ def reset(overrides: dict | None = None) -> None:
         data = copy.deepcopy(seed)
         for k, v in (overrides or {}).get(name, {}).items():
             data[k] = v
-        _path(name).write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        _path(name).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 @contextmanager
@@ -75,12 +112,10 @@ def store(name: str, write: bool = False):
     p = _path(name)
     if not p.exists():
         reset()
-    with open(p, "r+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+    with _lock(p, write), open(p, "r+", encoding="utf-8") as f:
         data = json.load(f)
         yield data
         if write:
             f.seek(0)
             f.truncate()
             json.dump(data, f, ensure_ascii=False, indent=2)
-        fcntl.flock(f, fcntl.LOCK_UN)

@@ -18,14 +18,15 @@ from langfuse import get_client, propagate_attributes
 from langfuse.langchain import CallbackHandler
 from langgraph.types import Command
 
-from followups import db
+from followups import db, memory
 from followups import llm as _llm  # noqa: F401  (.env 로드)
 from followups.graph import build_graph
+from followups.scenarios import load_all
 from followups.tools import open_toolbox
 
 RUNS = Path(__file__).resolve().parents[2] / "runs"
 
-# 단계: ("say", 텍스트) | ("chip", 칩 문구) | ("db", {파일: {키: 값}})
+# 단계: ("say", 텍스트) | ("attach", {"text": 텍스트, "image": data/ 기준 경로}) | ("chip", 칩 문구) | ("db", {파일: {키: 값}})
 SCENARIOS: dict[str, dict] = {
     "hoodie": {
         "desc": "복합 의도(결제+배송지 문의) → 슬롯 채우기 → 의존성 해제 → HITL 결제",
@@ -61,6 +62,19 @@ SCENARIOS: dict[str, dict] = {
         "expect": lambda log: _expect_refund_answer(log),
     },
 }
+
+
+def _image_message(text: str, image: str) -> HumanMessage:
+    import base64
+    import mimetypes
+
+    path = (db.ROOT / image) if not Path(image).is_absolute() else Path(image)
+    mime = mimetypes.guess_type(path.name)[0] or "image/png"
+    b64 = base64.b64encode(path.read_bytes()).decode()
+    return HumanMessage(content=[
+        {"type": "text", "text": text},
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+    ])
 
 
 def _expect_paid_to(fragment: str):
@@ -106,6 +120,9 @@ async def run_scenario(name: str, spec: dict, app, lf) -> dict:
         if kind == "say":
             inp = {"messages": [HumanMessage(content=value)], "user_id": "u1", "payload": None}
             shown = value
+        elif kind == "attach":
+            inp = {"messages": [_image_message(value["text"], value["image"])], "user_id": "u1", "payload": None}
+            shown = f"[이미지 {Path(value['image']).name}] {value['text']}"
         else:
             chip = next((c for c in chips if c["label"] == value), None)
             if not chip:
@@ -134,6 +151,14 @@ async def run_scenario(name: str, spec: dict, app, lf) -> dict:
                 pending_interrupt = None
                 bot, chips = out.get("answer", ""), out.get("followups", [])
             root.update(output={"answer": bot, "chips": [c["label"] for c in chips]})
+        # 턴 종료 후 메모리 추출 (서비스에서는 백그라운드, 러너에서는 결정성을 위해 다음 단계 전에 기다림)
+        if not pending_interrupt:
+            extra = await memory.after_turn(app, {**cfg_base, "callbacks": [handler]}, out) or []
+            if extra:  # 메모리 후보 확인 칩 (다음 턴에 누를 수 있음)
+                chips = [*chips, *extra]
+                snap = await app.aget_state(cfg_base)
+                out = {**out, "task_stack": snap.values.get("task_stack", out.get("task_stack", []))}
+                print(f"     메모리 후보 칩: {[c['label'] for c in extra]}")
         dt = time.perf_counter() - t0
         print(f"  👤 {shown}\n  🤖 {bot}\n     칩: {[c['label'] for c in chips]}   ({dt:.1f}s)")
         tasks = out.get("task_stack", [])
@@ -141,6 +166,7 @@ async def run_scenario(name: str, spec: dict, app, lf) -> dict:
                              "trace_id": trace_id, "interrupt": bool(pending_interrupt),
                              "tasks": [{k: t.get(k) for k in ("id", "intent", "mode", "status", "phase", "missing", "depends_on", "slots", "error")} for t in tasks]})
 
+    log["final_tasks"] = log["turns"][-1]["tasks"] if log["turns"] else []
     ok, detail = spec["expect"](log)
     log["expect"] = {"ok": ok, "detail": detail}
     print(f"  {'✅ PASS' if ok else '❌ FAIL'} {detail}")
@@ -155,16 +181,17 @@ async def main(names: list[str]):
     async with AsyncExitStack() as stack:
         box = await open_toolbox(stack)
         app = build_graph(box)
-        for n in names or list(SCENARIOS):
+        all_scenarios = {**SCENARIOS, **load_all()}
+        for n in names or list(all_scenarios):
             try:
-                results.append(await run_scenario(n, SCENARIOS[n], app, lf))
+                results.append(await run_scenario(n, all_scenarios[n], app, lf))
             except Exception as e:  # 시나리오 하나가 죽어도 나머지는 돌린다
                 import traceback
                 traceback.print_exc()
                 results.append({"scenario": n, "error": repr(e)})
     lf.flush()
     out = RUNS / f"run-{time.strftime('%H%M%S')}.json"
-    out.write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str))
+    out.write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print(f"\n결과 저장: {out}")
     passed = sum(1 for r in results if r.get("expect", {}).get("ok"))
     print(f"합계: {passed}/{len(results)} PASS")

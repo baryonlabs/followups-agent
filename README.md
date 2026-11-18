@@ -19,6 +19,36 @@ LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain
 ¹ 비공개 아티팩트라 공유받은 사람만 열 수 있습니다. 같은 내용이 `docs/plan.html`에 있습니다.
 ² Baryon Labs Excalidraw+ 워크스페이스 보드입니다. 접근 권한이 없으면 PNG를 보세요.
 
+## 구조적 멀티턴 확장 (제안요청서 요구사항)
+
+설계: [docs/rfp-structured-multiturn.md](docs/rfp-structured-multiturn.md). 대화 상태를 요약문이 아니라 작업 스택·슬롯·엔티티·칩 payload로 들고 가고, 기능은 플러그인 모듈로 붙입니다.
+
+| 요구 | 모듈 | 핵심 |
+|---|---|---|
+| 멀티목표 · 의존성 | `state.py` | 카탈로그 `produces/consumes`로 의존성 자동 연결, `refine`(끝난 작업 조건만 바꿔 재실행), 실행 직전 필수 슬롯 재확인 |
+| 멀티에이전트 | `graph.py` | `ROUTE_NODES`로 route → worker 배선. 2단계 의도 추출(의도 분리 → 의도별 작은 스키마로 슬롯 병렬 채움) |
+| 멀티스키마 Text-to-SQL | `sql_agent.py` · `schema_index.py` · `sql_data.py` · `mcp_servers/datahub.py` | 스키마 인덱스로 출처 선택(모호하면 칩), sqlglot 검증(SELECT만·PII 컬럼 차단·LIMIT), 비용 확인 칩, 읽기 전용 실행 |
+| 정책 | `guards.py` | 입력 가드(타인 PII·인젝션·쓰기 SQL 차단 + 대안 칩, 본인 PII 마스킹) · 출력 마스킹 · 판정 기록 |
+| 멀티모달 · 보고서 | `attachments.py` | 이미지는 입구에서 한 번만 사실 JSON으로, 보고서는 앞 작업 결과만 근거로 작성 + 근거 없는 수치 표시 |
+| 멀티가이드라인 | `state.py` `GUIDELINES` | 작업별로 필요한 지침 id만 부착 (기관 정책 > 업무 > 사용자 선호) |
+| 사용자 메모리 | `memory.py` | 턴 종료 후 후보 추출 → 동의 칩 → 출처와 함께 저장, 열람·삭제 |
+
+```bash
+uv run python -m followups.web       # 데모 UI http://localhost:8765 (채팅 · 칩 · 이미지 첨부 · 작업 스택 패널)
+uv run pytest -q                     # 153개, LLM 없이 (그래프 통합 흐름 포함)
+uv run python -m followups.run       # 실제 LLM 시나리오 14개 (src/followups/scenarios/*)
+```
+
+LLM 엔드포인트는 환경변수로 바꿉니다. 내부 OpenAI 호환 서버(사내 Solar API, vLLM 등)를 쓰려면 `.env`에 `LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_MAIN`, `MODEL_FAST`를 넣습니다. OpenRouter가 아니면 2단계 추출이 자동으로 켜집니다(`TWO_STAGE_EXTRACT`).
+
+이미지 판독은 두 방식입니다 (`ATTACHMENT_READER`).
+- `docparse` (OpenRouter가 아니면 기본값): 같은 서버의 Upstage Document Parse(`DOCPARSE_URL`, 기본 `LLM_BASE_URL` + `/document-parse`)로 OCR. 차트는 표로 복원되고, 텍스트 LLM이 사실 JSON으로 구조화합니다. 이미지 입력을 받지 않는 모델에서도 동작합니다.
+- `vlm`: `LLM_VISION_BASE_URL` / `MODEL_VISION`의 이미지 입력 모델에 직접 보냅니다.
+
+복합 발화에서 작은 모델이 첨부 해석 의도를 빠뜨려도, 이번 턴에 들어온 첨부에는 규칙으로 해석 작업을 붙입니다.
+
+내부 Solar(`solar-pro4-1.1.0`) 실측: 시나리오 14개 모두 통과 (2026-11-19, 이미지는 docparse 경로).
+
 ## 케이스별 검증
 
 <img src="docs/case-verification.png" width="900" alt="케이스별 검증 보드">

@@ -22,7 +22,7 @@ SERVERS = {
         "cwd": str(ROOT),
         "env": {**os.environ, "FASTMCP_LOG_LEVEL": "WARNING"},
     }
-    for name in ("payment", "member", "policy")
+    for name in ("payment", "member", "policy", "datahub")
 }
 
 
