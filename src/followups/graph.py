@@ -11,16 +11,36 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send, interrupt
 from pydantic import BaseModel, Field
 
-from followups.llm import MODEL_FAST, llm
+import asyncio
+import json
+import os
+
+from followups import attachments, guards, memory, sql_agent
+from followups.llm import IS_OPENROUTER, MODEL_FAST, llm
 from followups.state import (
-    TERMINAL, IntentResult, State, Task, apply_payload, compute_missing, link_dependencies, merge_slots,
-    merge_tasks, new_task, plan, rule_followups, select_followups,
+    CATALOG, INTENT_SLOT_EXAMPLES, INTENT_SLOTS, TERMINAL, IntentResult, drop_ungrounded, Slots, State, Task, slot_model, apply_payload, attach_guidelines, compute_missing, expire_stale_consents,
+    link_dependencies,
+    merge_slots, merge_tasks, new_task, plan, refine_task, render_guidelines, rule_followups, select_followups,
 )
 from followups.supervisor import build_refund_fastpath, build_supervisor
 from followups.tools import Toolbox
 
 MAX_LOOPS = 6
-PAYLOAD_OPS = {"fill_slots", "skip_task", "retry"}
+# 2단계 의도 추출: 작은/국산 모델(Solar 등)은 큰 슬롯 스키마를 잘 못 채운다 → 의도 분리 후 의도별 스키마로 병렬 채움
+TWO_STAGE_EXTRACT = os.getenv("TWO_STAGE_EXTRACT", "0" if IS_OPENROUTER else "1") == "1"
+SLOT_FILL_METHOD = os.getenv("SLOT_FILL_METHOD", "json_schema")
+PAYLOAD_OPS = {"fill_slots", "skip_task", "retry", "refine", "remember"}
+# route -> worker 노드 이름. 새 처리 경로는 CATALOG의 route와 여기, 그리고 build_graph의 add_node만 늘리면 된다
+ROUTE_NODES = {
+    "simple": "simple_worker",
+    "supervisor": "supervisor_agent",
+    "sql": "sql_agent",
+    "attachment": "attachment_worker",
+    "report": "report_writer",
+    "memory": "memory_writer",
+}
+WORKER_NODES = ["confirm_gate", *ROUTE_NODES.values()]
+REFINABLE = {"data_query"}  # 끝난 작업을 조건만 바꿔 다시 돌릴 수 있는 의도
 
 
 def _compact(obj: Any, limit: int = 600) -> str:
@@ -32,11 +52,33 @@ def _open_tasks(tasks: list[Task]) -> list[Task]:
     return [t for t in tasks if t["status"] not in TERMINAL]
 
 
+def _text_of(content) -> str:
+    if isinstance(content, str):
+        return content
+    # 멀티모달 메시지: [{"type": "text", "text": ...}, {"type": "image_url", ...}] → 텍스트 부분만
+    return " ".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text").strip()
+
+
 def _last_user_text(state: State) -> str:
     for m in reversed(state.get("messages", [])):
         if isinstance(m, HumanMessage):
-            return m.content if isinstance(m.content, str) else str(m.content)
+            return _text_of(m.content)
     return ""
+
+
+def _text_only(messages: list) -> list:
+    """의도 추출기에는 이미지를 다시 보내지 않는다 (첨부는 attachment_reader가 사실로 바꿔 둠)."""
+    out = []
+    for m in messages:
+        if isinstance(m, HumanMessage) and not isinstance(m.content, str):
+            out.append(HumanMessage(content=_text_of(m.content) or "[첨부]", id=m.id))
+        else:
+            out.append(m)
+    return out
+
+
+EXTRACTOR_HINTS = "\n".join(h for h in (sql_agent.EXTRACTOR_HINT, attachments.EXTRACTOR_HINT,
+                                         memory.EXTRACTOR_HINT, guards.EXTRACTOR_HINT) if h)
 
 
 class NextSteps(BaseModel):
@@ -45,18 +87,26 @@ class NextSteps(BaseModel):
 
 def build_graph(box: Toolbox, checkpointer=None):
     extractor = llm(MODEL_FAST).with_structured_output(IntentResult, method="function_calling")
+    extractor_json = llm(MODEL_FAST).with_structured_output(IntentResult, method="json_schema")
     writer = llm(MODEL_FAST)
     next_steps = llm(MODEL_FAST).with_structured_output(NextSteps, method="function_calling")
     supervisor = build_supervisor(box)
     refund_fastpath = build_refund_fastpath(box)
 
-    # ---------- ① 턴 시작 / 진입 분기 ----------
+    # ---------- ① 턴 시작 / 입력 가드 / 진입 분기 ----------
     def begin_turn(state: State) -> dict:
-        return {"turn": state.get("turn", 0) + 1, "loops": 0, "followups": [], "answer": ""}
+        turn = state.get("turn", 0) + 1
+        return {"turn": turn, "loops": 0, "followups": [], "answer": "", "guard": None,
+                "profile": memory.load_profile(state.get("user_id")),
+                "task_stack": expire_stale_consents(state.get("task_stack", []), turn)}
 
     def route_entry(state: State) -> str:
+        if (state.get("guard") or {}).get("blocked"):
+            return "policy_reply"
         p = state.get("payload")
-        return "apply_chip" if p and p.get("op") in PAYLOAD_OPS else "intent_extractor"
+        if p and p.get("op") in PAYLOAD_OPS:
+            return "apply_chip"
+        return "attachment_reader" if attachments.has_attachment(state) else "intent_extractor"
 
     def apply_chip(state: State) -> dict:
         changed = apply_payload(state["task_stack"], state["payload"], state["turn"])
@@ -75,14 +125,81 @@ def build_graph(box: Toolbox, checkpointer=None):
             "- '아까 그거'처럼 지칭하면 최근 엔티티의 id를 slots에 채운다.\n"
             "- 열린 작업의 빈 슬롯을 채우는 발화면 existing_task_id에 그 id를 넣고 같은 intent로.\n"
             "- 사용자가 말하지 않은 슬롯 값은 추측하지 않는다 (특히 scope).\n"
+            f"{EXTRACTOR_HINTS}\n"
             f"최근 엔티티: {_compact(state.get('entity_memory', {}))}\n"
+            f"첨부 사실: {_compact({k: v.get('facts') for k, v in (state.get('attachments') or {}).items()}, 1500)}\n"
             f"열린 작업: {_compact(open_tasks, 1500)}"
         ))
-        recent = state["messages"][-6:]
-        res: IntentResult = await extractor.ainvoke([sys, *recent], config={**config, "run_name": "intent_extractor.llm"})
-        return {"extracted": [i.model_dump() for i in res.intents]}
+        recent = _text_only(state["messages"][-6:])
+        res: IntentResult | None = None
+        # 작은 모델은 가끔 도구 호출을 건너뛰어 None을 준다 → json_schema로 한 번 더, 그래도 없으면 'other'
+        for ex_model, name in ((extractor, "intent_extractor.llm"), (extractor_json, "intent_extractor.retry")):
+            try:
+                res = await ex_model.ainvoke([sys, *recent], config={**config, "run_name": name})
+            except Exception:
+                res = None
+            if res is not None and res.intents:
+                break
+        if res is None or not res.intents:
+            from followups.state import ExtractedIntent
+
+            res = IntentResult(intents=[ExtractedIntent(intent="other", mode="inquiry", span=_last_user_text(state))])
+        intents = res.intents
+        if TWO_STAGE_EXTRACT and intents:
+            intents = await asyncio.gather(*(_fill_slots(i, sys, recent, config) for i in intents))
+        # 근거 없는 값(사용자가 고르지 않은 DB 출처, 말하지 않은 배송지 범위 등)은 규칙으로 지운다
+        text = _last_user_text(state)
+        intents = [i.model_copy(update={"slots": Slots(**drop_ungrounded(i.slots.model_dump(), text))}) for i in intents]
+        return {"extracted": [i.model_dump() for i in intents]}
+
+    async def _fill_slots(ex, sys, recent, config):
+        names = INTENT_SLOTS.get(ex.intent, [])
+        if not names:
+            return ex
+        schema = slot_model(ex.intent)
+        examples = "\n".join(f"- '{u}' → {json.dumps(v, ensure_ascii=False)}" for u, v in INTENT_SLOT_EXAMPLES.get(ex.intent, []))
+        ask = SystemMessage(content=(
+            f"{sys.content}\n\n"
+            f"지금은 슬롯 채우기 단계다. 의도 '{ex.intent}'(발화 조각: '{ex.span}')에 대해 "
+            f"아래 필드만 채운다: {', '.join(names)}.\n"
+            "- 발화·최근 엔티티·첨부 사실·열린 작업에 근거가 있는 값만. 근거 없으면 비운다 (기본값·추측 금지).\n"
+            "- 검색어(product_query)는 상품 이름만. 발화 전체를 넣지 않는다. 옵션은 '색상/사이즈' 형식.\n"
+            f"예시:\n{examples}"
+        ))
+        got = None
+        # 작은 스키마는 json_schema가 더 잘 채운다 (Solar 실측: function_calling은 option·address를 비움)
+        for method in (SLOT_FILL_METHOD, "function_calling"):
+            try:
+                got = await llm(MODEL_FAST).with_structured_output(schema, method=method).ainvoke(
+                    [ask, *recent], config={**config, "run_name": f"slot_filler.{ex.intent}"})
+                break
+            except Exception:
+                continue
+        if got is None:
+            return ex  # 슬롯 채우기 실패 시 1단계 결과로 (빈칸은 칩으로 묻는다)
+        filled = {k: v for k, v in got.model_dump().items()
+                  if v not in (None, "", []) and not (isinstance(v, str) and v[:1] in "<(")}  # 예시 자리표시자 복사 방지
+        base = {k: v for k, v in ex.slots.model_dump().items() if v not in (None, "", [])}
+        return ex.model_copy(update={"slots": Slots(**{**base, **filled})})
 
     # ---------- ② 스택 병합 ----------
+    def _refine_target(ex, tasks: list[Task]):
+        """'구별로도 나눠줘'처럼 필수 슬롯 없이 조건만 바꾸는 후속 발화 → 가장 최근에 끝난 같은 의도 작업.
+
+        모델이 existing_task_id를 못 채워도 구조(필수 슬롯이 비었고, 같은 의도의 끝난 작업이 있음)로 판단한다.
+        """
+        done = [t for t in tasks if t["intent"] == ex.intent and t["status"] == "done"]
+        if not done:
+            return None
+        last = max(done, key=lambda t: t.get("turn", 0))
+        required = CATALOG[ex.intent]["required"]
+        given = {k: v for k, v in ex.slots.model_dump().items() if v not in (None, "", [], "auto")}
+        # 필수 슬롯을 새로 말했으면(다른 지표) 새 조회. 모델이 앞 작업 값을 그대로 옮겨 적은 것은 새 값이 아니다
+        if any(r in given and given[r] != last["slots"].get(r) for r in required):
+            return None
+        changes = {k for k, v in given.items() if k not in required and v != last["slots"].get(k)}
+        return last if changes else None
+
     def stack_merger(state: State) -> dict:
         from followups.state import ExtractedIntent
 
@@ -96,6 +213,13 @@ def build_graph(box: Toolbox, checkpointer=None):
             if not target:  # 같은 의도의 열린 작업이 있으면 이어 붙임 (조회 의도 제외)
                 target = next((t for t in _open_tasks(list(by_id.values()))
                                if t["intent"] == ex.intent and ex.intent not in ("product_inquiry", "other")), None)
+            if not target and ex.intent in REFINABLE:
+                target = _refine_target(ex, list(by_id.values()))
+            if target and target["intent"] == ex.intent and target["status"] == "done" and (
+                    ex.existing_task_id or ex.intent in REFINABLE):
+                # 끝난 작업을 조건만 바꿔 다시 ('구별로도 나눠줘'): 그 결과를 쓴 보고서도 다시 돈다
+                changed += refine_task(merge_tasks(tasks, changed), target, ex.slots.model_dump(), turn)
+                continue
             if target and target["intent"] == ex.intent:
                 slots = merge_slots(target["slots"], ex.slots.model_dump())
                 mode = "action" if (ex.mode == "action" or target["mode"] == "action") else "inquiry"
@@ -107,6 +231,9 @@ def build_graph(box: Toolbox, checkpointer=None):
                 t = new_task(f"T{len(by_id) + 1}", ex, turn, state.get("entity_memory", {}))
                 if t["missing"]:
                     t["status"] = "blocked"
+                # 정책을 넘는 선호(예: 개인정보 표시)는 동의 칩을 띄우기 전에 거른다
+                if t["intent"] == "set_preference" and memory.policy_violation(t["slots"].get("pref_key"), t["slots"].get("pref_value")):
+                    t = {**t, "status": "cancelled", "error": "policy_override", "missing": []}
             changed.append(t)
         merged = merge_tasks(tasks, changed)
         return {"task_stack": changed + link_dependencies(merged), "extracted": []}
@@ -114,22 +241,27 @@ def build_graph(box: Toolbox, checkpointer=None):
     # ---------- ③ planner + 팬아웃 ----------
     def planner(state: State) -> dict:
         ready, changed = plan(state["task_stack"])
-        return {"task_stack": changed, "loops": state.get("loops", 0) + 1, "ready": [t["id"] for t in ready]}
+        # 실행할 작업에만 필요한 가이드라인 id를 붙인다 (멀티가이드라인)
+        guided = attach_guidelines(ready, state.get("profile"))
+        return {"task_stack": changed + guided, "loops": state.get("loops", 0) + 1, "ready": [t["id"] for t in ready]}
 
     def fan_out(state: State):
         if state["loops"] > MAX_LOOPS or not state.get("ready"):
             return ["aggregator", "followup_generator"]  # 서로 독립: 병렬로 돌려 턴 지연을 줄인다
         by_id = {t["id"]: t for t in state["task_stack"]}
+        profile = state.get("profile") or {}
         sends = []
         for tid in state["ready"]:
             t = by_id[tid]
-            arg = {"task": t, "user_id": state["user_id"], "turn": state["turn"], "utterance": _last_user_text(state)}
+            inputs = {d: {k: by_id[d].get(k) for k in ("intent", "status", "slots", "result", "sql")}
+                      for d in t.get("depends_on", []) if d in by_id}
+            arg = {"task": t, "user_id": state["user_id"], "turn": state["turn"], "utterance": _last_user_text(state),
+                   "inputs": inputs, "attachments": state.get("attachments") or {}, "profile": profile,
+                   "guidelines_text": render_guidelines(t.get("guidelines", []), profile)}
             if t["intent"] == "order_product" and t.get("phase") == "checkout":
                 sends.append(Send("confirm_gate", arg))
-            elif t["route"] == "supervisor":
-                sends.append(Send("supervisor_agent", arg))
             else:
-                sends.append(Send("simple_worker", arg))
+                sends.append(Send(ROUTE_NODES.get(t["route"], "simple_worker"), arg))
         return sends
 
     # ---------- ④ workers ----------
@@ -236,6 +368,11 @@ def build_graph(box: Toolbox, checkpointer=None):
     async def aggregator(state: State, config: RunnableConfig) -> dict:
         turn = state["turn"]
         touched = [t for t in state["task_stack"] if t.get("turn") == turn]
+        # 보고서 작업이 이번 턴에 끝났으면 그 본문이 곧 답이다 (앞 작업 결과를 이미 종합함)
+        report = next((t for t in touched if t["route"] == "report" and t["status"] == "done"), None)
+        if report and (report.get("result") or {}).get("summary"):
+            summary = report["result"]["summary"]
+            return {"answer": summary, "messages": [AIMessage(content=summary)]}
         # supervisor 결과는 이미 사용자용 요약이므로 다시 요약하지 않는다 (LLM 호출 1회, 약 4초 절약)
         if len(touched) == 1 and touched[0]["route"] == "supervisor" and touched[0]["status"] == "done":
             summary = (touched[0]["result"] or {}).get("summary", "")
@@ -276,24 +413,48 @@ def build_graph(box: Toolbox, checkpointer=None):
 
     g = StateGraph(State)
     g.add_node("begin_turn", begin_turn)
+    g.add_node("input_guard", guards.build_input_guard())
+    g.add_node("policy_reply", guards.build_policy_reply())
     g.add_node("apply_chip", apply_chip)
+    g.add_node("attachment_reader", attachments.build_attachment_reader())
     g.add_node("intent_extractor", intent_extractor)
     g.add_node("stack_merger", stack_merger)
     g.add_node("planner", planner)
     g.add_node("simple_worker", simple_worker)
     g.add_node("confirm_gate", confirm_gate)
     g.add_node("supervisor_agent", supervisor_agent)
+    g.add_node("sql_agent", sql_agent.build_sql_worker(box))
+    g.add_node("attachment_worker", attachments.build_attachment_worker(box))
+    g.add_node("report_writer", attachments.build_report_writer(box))
+    g.add_node("memory_writer", memory.build_memory_writer())
     g.add_node("aggregator", aggregator)
+    g.add_node("output_guard", guards.build_output_guard())
     g.add_node("followup_generator", followup_generator)
 
     g.add_edge(START, "begin_turn")
-    g.add_conditional_edges("begin_turn", route_entry, ["apply_chip", "intent_extractor"])
+    g.add_edge("begin_turn", "input_guard")
+    g.add_conditional_edges("input_guard", route_entry, ["policy_reply", "apply_chip", "attachment_reader", "intent_extractor"])
+    g.add_edge("policy_reply", END)
+    g.add_edge("attachment_reader", "intent_extractor")
     g.add_edge("intent_extractor", "stack_merger")
     g.add_edge("stack_merger", "planner")
     g.add_edge("apply_chip", "planner")
-    g.add_conditional_edges("planner", fan_out, ["simple_worker", "confirm_gate", "supervisor_agent", "aggregator", "followup_generator"])
-    for w in ("simple_worker", "confirm_gate", "supervisor_agent"):
+    g.add_conditional_edges("planner", fan_out, [*WORKER_NODES, "aggregator", "followup_generator"])
+    for w in WORKER_NODES:
         g.add_edge(w, "planner")  # 작업이 끝나면 다시 planner: 풀린 의존성을 같은 턴에 이어서 처리
-    g.add_edge("aggregator", END)
+    g.add_edge("aggregator", "output_guard")
+    g.add_edge("output_guard", END)
     g.add_edge("followup_generator", END)
-    return g.compile(checkpointer=checkpointer or InMemorySaver())
+    return g.compile(checkpointer=checkpointer or make_checkpointer())
+
+
+def make_checkpointer():
+    """단기 메모리(스레드 상태) 저장소. 기본은 프로세스 메모리.
+
+    서비스에서는 Postgres를 쓴다 (langgraph-checkpoint-postgres):
+        async with AsyncPostgresSaver.from_conn_string(dsn) as saver:
+            await saver.setup()
+            app = build_graph(box, checkpointer=saver)
+    interrupt로 멈춘 턴을 재개하려면 상태가 남아 있어야 하므로, 보존 기간은 화면 세션 만료(예: 30분)와 따로 정한다.
+    """
+    return InMemorySaver()

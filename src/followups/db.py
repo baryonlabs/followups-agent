@@ -47,6 +47,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.getenv("FOLLOWUPS_DATA_DIR", ROOT / "data"))
 
 SEED: dict[str, dict] = {
+    # 장기 사용자 메모리 (서비스에서는 Postgres user_profile 테이블). 확정된 선호만 둔다
+    "profile": {"users": {}},
     "member": {
         "users": {
             "u1": {
