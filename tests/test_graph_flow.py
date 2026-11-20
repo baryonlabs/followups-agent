@@ -35,7 +35,7 @@ class FakeModel:
         return FakeModel(schema)
 
     async def ainvoke(self, messages, config=None):
-        if self.schema is IntentResult:
+        if isinstance(self.schema, type) and issubclass(self.schema, IntentResult):
             return FakeModel.script.pop(0)
         if self.schema is not None:
             return self.schema(labels=[])

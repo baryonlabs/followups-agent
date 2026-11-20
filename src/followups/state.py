@@ -43,6 +43,13 @@ CATALOG: dict[str, dict[str, Any]] = {
                        "force_action": True},
     "other": {"required": [], "risk": "low", "route": "simple"},
 }
+# 의도 프로필: 추출기가 고를 수 있는 의도 집합. 도메인이 다른 의도가 섞이면 작은 모델이 헷갈린다.
+# 도메인 플러그인(followups.domains.register)이 자기 프로필과 의도를 여기에 더한다
+INTENT_PROFILES: dict[str, list[str]] = {
+    "all": list(CATALOG),
+    "commerce": ["product_inquiry", "order_product", "change_shipping_address", "exchange_or_refund", "delivery_incident",
+                 "data_query", "attachment_analysis", "report_compose", "set_preference", "other"],
+}
 SLOT_LABEL = {
     "product_id": "상품", "option": "옵션", "scope": "변경 범위", "address": "새 주소",
     "metric": "지표", "source": "데이터 출처", "period": "기간", "region": "지역", "group_by": "구분 기준",
@@ -134,7 +141,7 @@ def slot_model(intent: str) -> type[BaseModel]:
 
 
 class ExtractedIntent(BaseModel):
-    intent: IntentName
+    intent: str = Field(description="의도 이름")
     mode: Literal["action", "inquiry"] = Field(description="실행 요청이면 action, 가능 여부·정보만 묻는 질문이면 inquiry. 애매하면 inquiry")
     slots: Slots = Field(default_factory=Slots)
     existing_task_id: str | None = Field(None, description="열린 작업을 이어가는 발화면 그 작업 id")
@@ -143,6 +150,15 @@ class ExtractedIntent(BaseModel):
 
 class IntentResult(BaseModel):
     intents: list[ExtractedIntent]
+
+
+def intent_result_model(allowed: list[str]) -> type[IntentResult]:
+    """프로필의 의도만 고를 수 있는 추출 스키마 (결과는 ExtractedIntent의 하위 클래스라 그대로 쓴다)."""
+    from pydantic import create_model
+
+    lit = Literal[tuple(allowed)]  # type: ignore[valid-type]
+    item = create_model("ExtractedIntentP", __base__=ExtractedIntent, intent=(lit, ...))
+    return create_model("IntentResultP", __base__=IntentResult, intents=(list[item], ...))
 
 
 class SubagentResult(BaseModel):

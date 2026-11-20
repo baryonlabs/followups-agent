@@ -49,6 +49,33 @@ LLM 엔드포인트는 환경변수로 바꿉니다. 내부 OpenAI 호환 서버
 
 내부 Solar(`solar-pro4-1.1.0`) 실측: 시나리오 14개 모두 통과 (2026-11-19, 이미지는 docparse 경로).
 
+## 도메인 플러그인과 정답지 회귀 루프
+
+외부 도구를 부르는 서비스 도메인은 플러그인으로 붙인다 (`src/followups/domains.py`). 플러그인은 의도 카탈로그, 추출기 안내문, worker, 의도 보정 규칙을 한 번에 등록하고, `build_graph(profile=<이름>)`이면 추출기는 그 도메인 의도만 고른다. 조직·과제 전용 플러그인은 git 제외 폴더 `local/plugins/*_domain.py`에 두면 자동으로 불러온다 (`FOLLOWUPS_PLUGINS=경로.py`로도 지정).
+
+```python
+from followups.domains import DomainPlugin, register
+register(DomainPlugin(name="retail", route="retail", intents={"sales_lookup": {}, "store_count": {}},
+                      build_worker=build_retail_worker, extractor_hint="...", domain_label="소매 매출"))
+```
+
+멀티턴 처리 (그래프·worker 공통 규칙)
+- 짧은 후속 발화('치킨', '그 중에 금리 낮은 거')는 같은 도메인일 때만 직전 독립 질문과 합쳐 새 독립 질문으로 만든다. 숫자가 든 낱말은 그대로 두고, 지표·기간·지역 낱말은 앞 것을 대신한다.
+- 도메인 신호가 없는 낱말 하나짜리 턴은 진행 중인 도메인을 잇고, 다른 도메인의 분명한 신호가 있으면 전환한다 (플러그인 `continue_intent`·`correct_intent`).
+
+정답지 회귀 러너 (`followups.golden`)
+
+```bash
+uv run python -m followups.golden --profile <플러그인> --key 정답지.jsonl          # 전체
+uv run python -m followups.golden --profile <플러그인> --key ... --failed-from runs/golden-X.json
+uv run python -m followups.golden --merge runs/a.json runs/b.json                  # 회차 합본 성적표
+```
+
+- 정답지 한 줄: `문항ID`, `분류`, `질문`, `합격조건`(줄 단위), 선택 `기대검색`·`정답`·`턴`(멀티턴 발화 목록)·`턴조건`(턴마다 조건).
+- 합격조건을 줄마다 LLM이 판정해 모두 충족해야 합격. '도구 결과의 값' 조건은 그 실행의 실제 도구 결과와 대조하고, 도구 결과가 없거나 오류면 불합격. 불합격 판정이면 독립 채점 2회를 더 받아 조건별 다수결.
+- `턴조건`이 있으면 턴마다 채점하고 모든 턴이 합격해야 합격(여정형).
+- 플러그인이 `extra["targets"]`로 다른 실행 대상(예: 기존 챗 API)을 등록하면 `--target`으로 같은 정답지를 돌려 비교한다.
+
 ## 케이스별 검증
 
 <img src="docs/case-verification.png" width="900" alt="케이스별 검증 보드">

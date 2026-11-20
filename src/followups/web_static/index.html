@@ -178,8 +178,13 @@ $("#sample-img").onclick = async () => {
 $("#reset").onclick = async () => {
   const r = await (await fetch("/api/reset", {method:"POST"})).json();
   thread = r.thread_id; $("#log").innerHTML = ""; renderSide({tasks:[], turn:0});
+  if (r.samples?.length && !$("#samples").dataset.domain) {  // 도메인 플러그인 프로필이면 그 플러그인의 예시 질문으로
+    $("#samples").dataset.domain = "1"; $("#samples").innerHTML = "";
+    r.samples.forEach(addSample);
+  }
 };
-SAMPLES.forEach(s => { const b = document.createElement("button"); b.type = "button"; b.textContent = s; b.onclick = () => { $("#q").value = s; $("#q").focus(); }; $("#samples").appendChild(b); });
+const addSample = s => { const b = document.createElement("button"); b.type = "button"; b.textContent = s; b.onclick = () => { $("#q").value = s; $("#q").focus(); }; $("#samples").appendChild(b); };
+SAMPLES.forEach(addSample);
 $("#reset").click();
 </script>
 </body>

@@ -49,7 +49,7 @@ def _callbacks() -> list:
 async def lifespan(_app):
     async with AsyncExitStack() as stack:
         box = await open_toolbox(stack)
-        APP["graph"] = build_graph(box)
+        APP["graph"] = build_graph(box, profile=os.getenv("WEB_PROFILE") or None)  # 도메인 플러그인 프로필
         APP["chips"] = {}
         yield
 
@@ -127,7 +127,11 @@ async def turn(request: Request) -> JSONResponse:
 
 async def reset(request: Request) -> JSONResponse:
     db.reset()
-    return JSONResponse({"thread_id": uuid.uuid4().hex[:8]})
+    from followups import domains
+
+    plugin = domains.get(os.getenv("WEB_PROFILE"))
+    return JSONResponse({"thread_id": uuid.uuid4().hex[:8], "profile": os.getenv("WEB_PROFILE") or "all",
+                         "samples": list(plugin.samples) if plugin else []})
 
 
 async def sample_image(request: Request):
@@ -148,4 +152,8 @@ routes = [
 server = Starlette(routes=routes, lifespan=lifespan)
 
 if __name__ == "__main__":
+    import sys
+
+    if "--profile" in sys.argv:  # uv run python -m followups.web --profile <플러그인 이름>
+        os.environ["WEB_PROFILE"] = sys.argv[sys.argv.index("--profile") + 1]
     uvicorn.run(server, host="127.0.0.1", port=int(os.getenv("PORT", "8765")), log_level="info")
