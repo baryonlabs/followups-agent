@@ -1,12 +1,58 @@
-# followups-agent
+# 우리공 (followups-agent)
 
-한 문장에 여러 요청이 섞여도 병렬로 처리하고, 남은 빈칸·확인·다음 단계를 **후속 질문 칩(Follow-ups)**으로 이어 가는 대화 에이전트의 레퍼런스 구현입니다.
-LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain/multi-agent#patterns) 중 **Custom workflow + Router**를 바탕으로, 판단형 질문에만 **Subagents**를 씁니다.
+<img src="docs/icon.svg" width="48" align="left" alt="우리공 아이콘">
 
-- LangGraph (`Send` 병렬 팬아웃, `interrupt` 결제 확인, 체크포인터)
-- MCP 목(mock) 서버 3개: payment · member · policy (stdio)
-- OpenRouter (Claude Haiku 5.5 / Sonnet 5.5)
-- Langfuse v3 로컬 트레이싱 + 트레이스 분석 스크립트
+**우리공**은 한 문장에 여러 요청이 섞여도 나눠서 함께 처리하고, 남은 빈칸·확인·다음 단계를 **후속 질문 칩**으로 이어 가는 대화 에이전트의 레퍼런스 구현입니다.
+채팅창에서 **`@우리공`** 또는 짧게 **`@공`** 이라고 부르고 바로 물어보면 됩니다.
+
+<br clear="left">
+
+```
+@공 마포구 업종별 점포 수 보여줘
+@공 구별로도
+@우리공 후드티 블랙 L 재고 있어?
+```
+
+## 기능 한눈에
+
+| 기능 | 하는 일 | 어디 |
+|---|---|---|
+| 후속 질문 칩 | 빈칸 채우기·실행 확인·복구·다음 단계를 버튼으로 제안. 누르면 의도 추출 없이 바로 이어짐 | `state.py` `graph.py` |
+| 병렬·복합 요청 | 한 문장의 여러 의도를 나눠 `Send`로 동시에 실행, 의존 관계는 자동 연결 | `graph.py` `state.py` |
+| 구조적 멀티턴 | 대화를 요약 대신 작업 스택·슬롯·엔티티로 들고 감. "구별로도", "그 중에" 같은 짧은 후속을 앞 질문에 이어 붙임 | `state.py` `graph.py` |
+| 판단형 질문 | 교환·환불처럼 근거가 필요한 질문은 하위 에이전트가 약관·주문을 함께 보고 답함 | `supervisor.py` |
+| 결제 확인 | 돈이 오가는 작업은 실행 전에 사람 확인(`interrupt`) | `graph.py` |
+| Text-to-SQL | 여러 DB 중 출처 고르기, SELECT만 허용·개인정보 컬럼 차단 검증 후 읽기 전용 실행 | `sql_agent.py` |
+| 이미지·보고서 | 차트 이미지를 사실 JSON으로 읽고, 앞 작업 결과만 근거로 보고서 작성 | `attachments.py` |
+| 정책 가드 | 타인 개인정보·인젝션·쓰기 SQL 차단과 대안 칩, 출력 마스킹 | `guards.py` |
+| 사용자 메모리 | 선호를 동의 칩으로 확인한 뒤에만 저장, 열람·삭제 | `memory.py` |
+| 도메인 플러그인 | 외부 도구를 부르는 서비스 도메인을 의도·worker·보정 규칙 한 묶음으로 붙임 | `domains.py` |
+| 정답지 회귀 러너 | jsonl 정답지를 돌려 조건별 LLM 채점, 턴별 채점, 실패만 재실행, 비교 대상 실행 | `golden.py` |
+| 데모 웹 | 채팅·칩·이미지 첨부·작업 스택 패널, `@공` 호출 | `web.py` |
+| 관측 | Langfuse v3 트레이싱과 턴별 분석 스크립트 | `inspect_traces.py` `infra/` |
+
+기반: LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain/multi-agent#patterns)의 **Custom workflow + Router**, 판단형 질문에만 **Subagents**. LangGraph(`Send` 병렬, `interrupt`, 체크포인터), MCP 목 서버 3개(payment · member · policy), OpenAI 호환 LLM(OpenRouter 또는 사내 서버).
+
+## 빠른 시작
+
+```bash
+cp .env.example .env                 # LLM 키·주소
+uv run python -m followups.web       # http://localhost:8765 — "@공 …" 으로 물어보기
+uv run pytest -q                     # LLM 없이 도는 테스트
+```
+
+## 이름 바꾸기
+
+기본 이름은 `우리공`, 짧은 이름은 `공`입니다. 더 쉬운 이름이 있으면 환경변수나 실행 옵션으로 바꿉니다. 화면 제목·아이콘 글자·입력창 안내·부르는 말이 함께 바뀝니다.
+
+```bash
+FOLLOWUPS_APP_NAME=도우미 FOLLOWUPS_APP_ALIASES=도 uv run python -m followups.web
+uv run python -m followups.web --name 도우미 --alias 도
+```
+
+- 메시지 맨 앞의 `@이름`, `@이름아/야`, `@이름님`과 뒤따르는 쉼표는 떼고 나머지만 처리합니다. `@공`만 보내면 인사로 받습니다.
+- `@공장`처럼 이름이 낱말의 일부면 부르는 말로 보지 않습니다.
+- 아이콘은 이름 첫 글자를 넣은 말풍선 SVG(`/icon.svg`)라 이미지 파일을 따로 두지 않습니다 (`naming.py`).
 
 ## 관련 자료
 
@@ -35,7 +81,7 @@ LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain
 
 ```bash
 uv run python -m followups.web       # 데모 UI http://localhost:8765 (채팅 · 칩 · 이미지 첨부 · 작업 스택 패널)
-uv run pytest -q                     # 153개, LLM 없이 (그래프 통합 흐름 포함)
+uv run pytest -q                     # LLM 없이 (그래프 통합 흐름 포함)
 uv run python -m followups.run       # 실제 LLM 시나리오 14개 (src/followups/scenarios/*)
 ```
 
@@ -129,6 +175,10 @@ uv run python -m followups.inspect_traces <session-id>
 |---|---|
 | `src/followups/state.py` | 상태 스키마, 의도 카탈로그, planner · follow-up · 칩 payload 규칙 (순수 로직, 테스트 대상) |
 | `src/followups/graph.py` | 메인 그래프 |
+| `src/followups/domains.py` | 도메인 플러그인 레지스트리 |
+| `src/followups/golden.py` | 정답지 회귀 러너 |
+| `src/followups/naming.py` | 앱 이름·부르는 이름·아이콘 |
+| `src/followups/web.py` | 데모 웹 서버 (`web_static/index.html`) |
 | `src/followups/supervisor.py` | 판단형 의도: 일반 supervisor(subagents as tools) + 교환/환불 빠른 경로 |
 | `src/followups/tools.py` | MCP 세션 유지, 서버별 도구 묶음(동적 바인딩) |
 | `src/followups/mcp_servers/` | payment · member · policy 목 서버 (`data/*.json` 공유) |

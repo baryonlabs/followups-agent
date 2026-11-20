@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>구조적 멀티턴 데모</title>
+<title>우리공</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <style>
 :root{
   --bg:#f6f7f9; --panel:#ffffff; --ink:#1b1f24; --muted:#667085; --line:#e4e7ec;
@@ -65,7 +66,9 @@ details{margin-top:4px} summary{cursor:pointer;color:var(--muted);font-size:12px
 </head>
 <body>
 <header>
-  <h1>구조적 멀티턴 데모</h1>
+  <img src="/icon.svg" alt="" width="26" height="26">
+  <h1 id="app-name">우리공</h1>
+  <span class="meta" id="call-guide">@우리공 · @공 이라고 불러도 돼요</span>
   <span class="meta" id="meta">스레드 -</span>
   <button id="reset" type="button">새 대화</button>
 </header>
@@ -78,7 +81,7 @@ details{margin-top:4px} summary{cursor:pointer;color:var(--muted);font-size:12px
       <button type="button" id="pick" title="이미지 첨부">이미지</button>
       <button type="button" id="sample-img" title="마포구 매출 차트 첨부">샘플 차트</button>
       <span id="attach-preview"></span>
-      <input type="text" id="q" placeholder="메시지를 입력하세요" autocomplete="off">
+      <input type="text" id="q" placeholder="@공 무엇이든 물어보세요" autocomplete="off">
       <button class="primary" id="send">보내기</button>
     </form>
   </section>
@@ -178,6 +181,13 @@ $("#sample-img").onclick = async () => {
 $("#reset").onclick = async () => {
   const r = await (await fetch("/api/reset", {method:"POST"})).json();
   thread = r.thread_id; $("#log").innerHTML = ""; renderSide({tasks:[], turn:0});
+  if (r.name) {  // 이름은 서버 설정(FOLLOWUPS_APP_NAME·ALIASES)을 따른다
+    const calls = r.call_names || ["@" + r.name];
+    document.title = r.name; $("#app-name").textContent = r.name;
+    $("#call-guide").textContent = calls.join(" · ") + " 이라고 불러도 돼요";
+    $("#q").placeholder = calls[calls.length - 1] + " 무엇이든 물어보세요";
+    addMsg("bot", `안녕하세요, ${r.name}입니다. ${calls.join(" 또는 ")} 이라고 부르고 바로 물어보세요.`);
+  }
   if (r.samples?.length && !$("#samples").dataset.domain) {  // 도메인 플러그인 프로필이면 그 플러그인의 예시 질문으로
     $("#samples").dataset.domain = "1"; $("#samples").innerHTML = "";
     r.samples.forEach(addSample);
