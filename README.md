@@ -19,9 +19,9 @@ LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain
 ¹ 비공개 아티팩트라 공유받은 사람만 열 수 있습니다. 같은 내용이 `docs/plan.html`에 있습니다.
 ² Baryon Labs Excalidraw+ 워크스페이스 보드입니다. 접근 권한이 없으면 PNG를 보세요.
 
-## 구조적 멀티턴 확장 (제안요청서 요구사항)
+## 구조적 멀티턴 확장
 
-설계: [docs/rfp-structured-multiturn.md](docs/rfp-structured-multiturn.md). 대화 상태를 요약문이 아니라 작업 스택·슬롯·엔티티·칩 payload로 들고 가고, 기능은 플러그인 모듈로 붙입니다.
+설계: [docs/structured-multiturn.md](docs/structured-multiturn.md). 대화 상태를 요약문이 아니라 작업 스택·슬롯·엔티티·칩 payload로 들고 가고, 기능은 플러그인 모듈로 붙입니다.
 
 | 요구 | 모듈 | 핵심 |
 |---|---|---|
