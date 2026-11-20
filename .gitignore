@@ -9,3 +9,5 @@ data/*.lock
 data/*.sqlite*
 data/attachments/uploads/
 .env.bak*
+golden/
+local/

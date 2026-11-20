@@ -16,10 +16,10 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from followups import db, memory
+from followups import db, memory, naming
 from followups import llm as _llm  # noqa: F401  (.env 로드)
 from followups.graph import build_graph
 from followups.tools import open_toolbox
@@ -49,7 +49,7 @@ def _callbacks() -> list:
 async def lifespan(_app):
     async with AsyncExitStack() as stack:
         box = await open_toolbox(stack)
-        APP["graph"] = build_graph(box)
+        APP["graph"] = build_graph(box, profile=os.getenv("WEB_PROFILE") or None)  # 도메인 플러그인 프로필
         APP["chips"] = {}
         yield
 
@@ -76,6 +76,9 @@ async def turn(request: Request) -> JSONResponse:
     cfg = {"configurable": {"thread_id": thread}}
     app = APP["graph"]
     text = (body.get("text") or "").strip()
+    text, called = naming.strip_call(text)  # "@우리공 …", "@공 …" → 부르는 말은 떼고
+    if called and not text and not body.get("image") and not body.get("chip"):
+        text = "안녕"
     image = body.get("image")
     chip = body.get("chip")
 
@@ -127,12 +130,21 @@ async def turn(request: Request) -> JSONResponse:
 
 async def reset(request: Request) -> JSONResponse:
     db.reset()
-    return JSONResponse({"thread_id": uuid.uuid4().hex[:8]})
+    from followups import domains
+
+    plugin = domains.get(os.getenv("WEB_PROFILE"))
+    return JSONResponse({"thread_id": uuid.uuid4().hex[:8], "profile": os.getenv("WEB_PROFILE") or "all",
+                         "samples": list(plugin.samples) if plugin else [],
+                         "name": naming.app_name(), "call_names": naming.call_names()})
 
 
 async def sample_image(request: Request):
     p = db.ROOT / "data" / "attachments" / "mapo_sales_2026h1.png"
     return FileResponse(p) if p.exists() else JSONResponse({"error": "no sample"}, status_code=404)
+
+
+async def icon(request: Request):
+    return Response(naming.icon_svg(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
 
 async def index(request: Request):
@@ -144,8 +156,17 @@ routes = [
     Route("/api/turn", turn, methods=["POST"]),
     Route("/api/reset", reset, methods=["POST"]),
     Route("/api/sample-image", sample_image),
+    Route("/icon.svg", icon),
 ]
 server = Starlette(routes=routes, lifespan=lifespan)
 
 if __name__ == "__main__":
+    import sys
+
+    if "--profile" in sys.argv:  # uv run python -m followups.web --profile <플러그인 이름>
+        os.environ["WEB_PROFILE"] = sys.argv[sys.argv.index("--profile") + 1]
+    if "--name" in sys.argv:  # --name 새이름 [--alias 짧은이름]
+        os.environ["FOLLOWUPS_APP_NAME"] = sys.argv[sys.argv.index("--name") + 1]
+    if "--alias" in sys.argv:
+        os.environ["FOLLOWUPS_APP_ALIASES"] = sys.argv[sys.argv.index("--alias") + 1]
     uvicorn.run(server, host="127.0.0.1", port=int(os.getenv("PORT", "8765")), log_level="info")

@@ -1,12 +1,58 @@
-# followups-agent
+# 우리공 (followups-agent)
 
-한 문장에 여러 요청이 섞여도 병렬로 처리하고, 남은 빈칸·확인·다음 단계를 **후속 질문 칩(Follow-ups)**으로 이어 가는 대화 에이전트의 레퍼런스 구현입니다.
-LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain/multi-agent#patterns) 중 **Custom workflow + Router**를 바탕으로, 판단형 질문에만 **Subagents**를 씁니다.
+<img src="docs/icon.svg" width="48" align="left" alt="우리공 아이콘">
 
-- LangGraph (`Send` 병렬 팬아웃, `interrupt` 결제 확인, 체크포인터)
-- MCP 목(mock) 서버 3개: payment · member · policy (stdio)
-- OpenRouter (Claude Haiku 5.5 / Sonnet 5.5)
-- Langfuse v3 로컬 트레이싱 + 트레이스 분석 스크립트
+**우리공**은 한 문장에 여러 요청이 섞여도 나눠서 함께 처리하고, 남은 빈칸·확인·다음 단계를 **후속 질문 칩**으로 이어 가는 대화 에이전트의 레퍼런스 구현입니다.
+채팅창에서 **`@우리공`** 또는 짧게 **`@공`** 이라고 부르고 바로 물어보면 됩니다.
+
+<br clear="left">
+
+```
+@공 마포구 업종별 점포 수 보여줘
+@공 구별로도
+@우리공 후드티 블랙 L 재고 있어?
+```
+
+## 기능 한눈에
+
+| 기능 | 하는 일 | 어디 |
+|---|---|---|
+| 후속 질문 칩 | 빈칸 채우기·실행 확인·복구·다음 단계를 버튼으로 제안. 누르면 의도 추출 없이 바로 이어짐 | `state.py` `graph.py` |
+| 병렬·복합 요청 | 한 문장의 여러 의도를 나눠 `Send`로 동시에 실행, 의존 관계는 자동 연결 | `graph.py` `state.py` |
+| 구조적 멀티턴 | 대화를 요약 대신 작업 스택·슬롯·엔티티로 들고 감. "구별로도", "그 중에" 같은 짧은 후속을 앞 질문에 이어 붙임 | `state.py` `graph.py` |
+| 판단형 질문 | 교환·환불처럼 근거가 필요한 질문은 하위 에이전트가 약관·주문을 함께 보고 답함 | `supervisor.py` |
+| 결제 확인 | 돈이 오가는 작업은 실행 전에 사람 확인(`interrupt`) | `graph.py` |
+| Text-to-SQL | 여러 DB 중 출처 고르기, SELECT만 허용·개인정보 컬럼 차단 검증 후 읽기 전용 실행 | `sql_agent.py` |
+| 이미지·보고서 | 차트 이미지를 사실 JSON으로 읽고, 앞 작업 결과만 근거로 보고서 작성 | `attachments.py` |
+| 정책 가드 | 타인 개인정보·인젝션·쓰기 SQL 차단과 대안 칩, 출력 마스킹 | `guards.py` |
+| 사용자 메모리 | 선호를 동의 칩으로 확인한 뒤에만 저장, 열람·삭제 | `memory.py` |
+| 도메인 플러그인 | 외부 도구를 부르는 서비스 도메인을 의도·worker·보정 규칙 한 묶음으로 붙임 | `domains.py` |
+| 정답지 회귀 러너 | jsonl 정답지를 돌려 조건별 LLM 채점, 턴별 채점, 실패만 재실행, 비교 대상 실행 | `golden.py` |
+| 데모 웹 | 채팅·칩·이미지 첨부·작업 스택 패널, `@공` 호출 | `web.py` |
+| 관측 | Langfuse v3 트레이싱과 턴별 분석 스크립트 | `inspect_traces.py` `infra/` |
+
+기반: LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain/multi-agent#patterns)의 **Custom workflow + Router**, 판단형 질문에만 **Subagents**. LangGraph(`Send` 병렬, `interrupt`, 체크포인터), MCP 목 서버 3개(payment · member · policy), OpenAI 호환 LLM(OpenRouter 또는 사내 서버).
+
+## 빠른 시작
+
+```bash
+cp .env.example .env                 # LLM 키·주소
+uv run python -m followups.web       # http://localhost:8765 — "@공 …" 으로 물어보기
+uv run pytest -q                     # LLM 없이 도는 테스트
+```
+
+## 이름 바꾸기
+
+기본 이름은 `우리공`, 짧은 이름은 `공`입니다. 더 쉬운 이름이 있으면 환경변수나 실행 옵션으로 바꿉니다. 화면 제목·아이콘 글자·입력창 안내·부르는 말이 함께 바뀝니다.
+
+```bash
+FOLLOWUPS_APP_NAME=도우미 FOLLOWUPS_APP_ALIASES=도 uv run python -m followups.web
+uv run python -m followups.web --name 도우미 --alias 도
+```
+
+- 메시지 맨 앞의 `@이름`, `@이름아/야`, `@이름님`과 뒤따르는 쉼표는 떼고 나머지만 처리합니다. `@공`만 보내면 인사로 받습니다.
+- `@공장`처럼 이름이 낱말의 일부면 부르는 말로 보지 않습니다.
+- 아이콘은 이름 첫 글자를 넣은 말풍선 SVG(`/icon.svg`)라 이미지 파일을 따로 두지 않습니다 (`naming.py`).
 
 ## 관련 자료
 
@@ -19,9 +65,9 @@ LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain
 ¹ 비공개 아티팩트라 공유받은 사람만 열 수 있습니다. 같은 내용이 `docs/plan.html`에 있습니다.
 ² Baryon Labs Excalidraw+ 워크스페이스 보드입니다. 접근 권한이 없으면 PNG를 보세요.
 
-## 구조적 멀티턴 확장 (제안요청서 요구사항)
+## 구조적 멀티턴 확장
 
-설계: [docs/rfp-structured-multiturn.md](docs/rfp-structured-multiturn.md). 대화 상태를 요약문이 아니라 작업 스택·슬롯·엔티티·칩 payload로 들고 가고, 기능은 플러그인 모듈로 붙입니다.
+설계: [docs/structured-multiturn.md](docs/structured-multiturn.md). 대화 상태를 요약문이 아니라 작업 스택·슬롯·엔티티·칩 payload로 들고 가고, 기능은 플러그인 모듈로 붙입니다.
 
 | 요구 | 모듈 | 핵심 |
 |---|---|---|
@@ -35,7 +81,7 @@ LangChain [multi-agent patterns](https://docs.langchain.com/oss/python/langchain
 
 ```bash
 uv run python -m followups.web       # 데모 UI http://localhost:8765 (채팅 · 칩 · 이미지 첨부 · 작업 스택 패널)
-uv run pytest -q                     # 153개, LLM 없이 (그래프 통합 흐름 포함)
+uv run pytest -q                     # LLM 없이 (그래프 통합 흐름 포함)
 uv run python -m followups.run       # 실제 LLM 시나리오 14개 (src/followups/scenarios/*)
 ```
 
@@ -48,6 +94,33 @@ LLM 엔드포인트는 환경변수로 바꿉니다. 내부 OpenAI 호환 서버
 복합 발화에서 작은 모델이 첨부 해석 의도를 빠뜨려도, 이번 턴에 들어온 첨부에는 규칙으로 해석 작업을 붙입니다.
 
 내부 Solar(`solar-pro4-1.1.0`) 실측: 시나리오 14개 모두 통과 (2026-11-19, 이미지는 docparse 경로).
+
+## 도메인 플러그인과 정답지 회귀 루프
+
+외부 도구를 부르는 서비스 도메인은 플러그인으로 붙인다 (`src/followups/domains.py`). 플러그인은 의도 카탈로그, 추출기 안내문, worker, 의도 보정 규칙을 한 번에 등록하고, `build_graph(profile=<이름>)`이면 추출기는 그 도메인 의도만 고른다. 조직·과제 전용 플러그인은 git 제외 폴더 `local/plugins/*_domain.py`에 두면 자동으로 불러온다 (`FOLLOWUPS_PLUGINS=경로.py`로도 지정).
+
+```python
+from followups.domains import DomainPlugin, register
+register(DomainPlugin(name="retail", route="retail", intents={"sales_lookup": {}, "store_count": {}},
+                      build_worker=build_retail_worker, extractor_hint="...", domain_label="소매 매출"))
+```
+
+멀티턴 처리 (그래프·worker 공통 규칙)
+- 짧은 후속 발화('치킨', '그 중에 금리 낮은 거')는 같은 도메인일 때만 직전 독립 질문과 합쳐 새 독립 질문으로 만든다. 숫자가 든 낱말은 그대로 두고, 지표·기간·지역 낱말은 앞 것을 대신한다.
+- 도메인 신호가 없는 낱말 하나짜리 턴은 진행 중인 도메인을 잇고, 다른 도메인의 분명한 신호가 있으면 전환한다 (플러그인 `continue_intent`·`correct_intent`).
+
+정답지 회귀 러너 (`followups.golden`)
+
+```bash
+uv run python -m followups.golden --profile <플러그인> --key 정답지.jsonl          # 전체
+uv run python -m followups.golden --profile <플러그인> --key ... --failed-from runs/golden-X.json
+uv run python -m followups.golden --merge runs/a.json runs/b.json                  # 회차 합본 성적표
+```
+
+- 정답지 한 줄: `문항ID`, `분류`, `질문`, `합격조건`(줄 단위), 선택 `기대검색`·`정답`·`턴`(멀티턴 발화 목록)·`턴조건`(턴마다 조건).
+- 합격조건을 줄마다 LLM이 판정해 모두 충족해야 합격. '도구 결과의 값' 조건은 그 실행의 실제 도구 결과와 대조하고, 도구 결과가 없거나 오류면 불합격. 불합격 판정이면 독립 채점 2회를 더 받아 조건별 다수결.
+- `턴조건`이 있으면 턴마다 채점하고 모든 턴이 합격해야 합격(여정형).
+- 플러그인이 `extra["targets"]`로 다른 실행 대상(예: 기존 챗 API)을 등록하면 `--target`으로 같은 정답지를 돌려 비교한다.
 
 ## 케이스별 검증
 
@@ -102,6 +175,10 @@ uv run python -m followups.inspect_traces <session-id>
 |---|---|
 | `src/followups/state.py` | 상태 스키마, 의도 카탈로그, planner · follow-up · 칩 payload 규칙 (순수 로직, 테스트 대상) |
 | `src/followups/graph.py` | 메인 그래프 |
+| `src/followups/domains.py` | 도메인 플러그인 레지스트리 |
+| `src/followups/golden.py` | 정답지 회귀 러너 |
+| `src/followups/naming.py` | 앱 이름·부르는 이름·아이콘 |
+| `src/followups/web.py` | 데모 웹 서버 (`web_static/index.html`) |
 | `src/followups/supervisor.py` | 판단형 의도: 일반 supervisor(subagents as tools) + 교환/환불 빠른 경로 |
 | `src/followups/tools.py` | MCP 세션 유지, 서버별 도구 묶음(동적 바인딩) |
 | `src/followups/mcp_servers/` | payment · member · policy 목 서버 (`data/*.json` 공유) |

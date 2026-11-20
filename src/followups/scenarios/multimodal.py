@@ -1,4 +1,4 @@
-"""4단계 멀티모달 시나리오 (docs/rfp-structured-multiturn.md 6장 턴 1~3).
+"""4단계 멀티모달 시나리오 (docs/structured-multiturn.md 6장 턴 1~3).
 
 uv run python -m followups.run mapo_report       # 차트 + DB + 보고서 (출처 칩 → 보고서 → 구별 refine)
 uv run python -m followups.run chart_only        # 첨부만: 판독 → '아까 보낸 차트'로 보고서

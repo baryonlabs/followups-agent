@@ -15,10 +15,10 @@ import asyncio
 import json
 import os
 
-from followups import attachments, guards, memory, sql_agent
+from followups import attachments, domains, guards, memory, sql_agent
 from followups.llm import IS_OPENROUTER, MODEL_FAST, llm
 from followups.state import (
-    CATALOG, INTENT_SLOT_EXAMPLES, INTENT_SLOTS, TERMINAL, IntentResult, drop_ungrounded, Slots, State, Task, slot_model, apply_payload, attach_guidelines, compute_missing, expire_stale_consents,
+    CATALOG, INTENT_PROFILES, INTENT_SLOT_EXAMPLES, INTENT_SLOTS, TERMINAL, IntentResult, intent_result_model, drop_ungrounded, Slots, State, Task, slot_model, apply_payload, attach_guidelines, compute_missing, expire_stale_consents,
     link_dependencies,
     merge_slots, merge_tasks, new_task, plan, refine_task, render_guidelines, rule_followups, select_followups,
 )
@@ -39,7 +39,7 @@ ROUTE_NODES = {
     "report": "report_writer",
     "memory": "memory_writer",
 }
-WORKER_NODES = ["confirm_gate", *ROUTE_NODES.values()]
+WORKER_NODES = ["confirm_gate", *ROUTE_NODES.values()]  # 도메인 플러그인 worker는 build_graph에서 더한다
 REFINABLE = {"data_query"}  # 끝난 작업을 조건만 바꿔 다시 돌릴 수 있는 의도
 
 
@@ -77,17 +77,37 @@ def _text_only(messages: list) -> list:
     return out
 
 
-EXTRACTOR_HINTS = "\n".join(h for h in (sql_agent.EXTRACTOR_HINT, attachments.EXTRACTOR_HINT,
-                                         memory.EXTRACTOR_HINT, guards.EXTRACTOR_HINT) if h)
+DOMAIN_PROFILE = os.getenv("DOMAIN_PROFILE", "all")  # all | commerce | 등록된 도메인 플러그인 이름 (state.INTENT_PROFILES)
+_BASE_HINTS = (attachments.EXTRACTOR_HINT, memory.EXTRACTOR_HINT, guards.EXTRACTOR_HINT)
+
+
+def extractor_hints(profile: str) -> str:
+    plugin = domains.get(profile)
+    if plugin:
+        hints = (plugin.extractor_hint, *_BASE_HINTS)
+    elif profile == "commerce":
+        hints = (sql_agent.EXTRACTOR_HINT, *_BASE_HINTS)
+    else:  # all: 커머스 + 등록된 모든 플러그인
+        hints = (sql_agent.EXTRACTOR_HINT, *(p.extractor_hint for p in domains.PLUGINS.values()), *_BASE_HINTS)
+    return "\n".join(h for h in hints if h)
 
 
 class NextSteps(BaseModel):
     labels: list[str] = Field(description="사용자가 이어서 누를 만한 다음 행동 칩 문구 (최대 2개, 각 15자 이내)")
 
 
-def build_graph(box: Toolbox, checkpointer=None):
-    extractor = llm(MODEL_FAST).with_structured_output(IntentResult, method="function_calling")
-    extractor_json = llm(MODEL_FAST).with_structured_output(IntentResult, method="json_schema")
+def build_graph(box: Toolbox, checkpointer=None, profile: str | None = None):
+    domains.load_plugins()
+    profile = profile or DOMAIN_PROFILE
+    plugin = domains.get(profile)
+    domain_routes = domains.routes() if profile == "all" else ({plugin.route} if plugin else set())
+    route_nodes = {**ROUTE_NODES, **{p.route: p.worker_node for p in domains.PLUGINS.values()}}
+    worker_nodes = [*WORKER_NODES, *(p.worker_node for p in domains.PLUGINS.values())]
+    schema = intent_result_model(INTENT_PROFILES.get(profile, INTENT_PROFILES["all"]))
+    EXTRACTOR_HINTS = extractor_hints(profile)
+    domain = (plugin.domain_label or plugin.name) if plugin else "커머스"
+    extractor = llm(MODEL_FAST).with_structured_output(schema, method="function_calling")
+    extractor_json = llm(MODEL_FAST).with_structured_output(schema, method="json_schema")
     writer = llm(MODEL_FAST)
     next_steps = llm(MODEL_FAST).with_structured_output(NextSteps, method="function_calling")
     supervisor = build_supervisor(box)
@@ -119,7 +139,7 @@ def build_graph(box: Toolbox, checkpointer=None):
             for t in _open_tasks(state.get("task_stack", []))
         ]
         sys = SystemMessage(content=(
-            "너는 커머스 챗봇의 의도 추출기다. 마지막 사용자 발화를 의도 단위로 모두 나눈다.\n"
+            f"너는 {domain} 챗봇의 의도 추출기다. 마지막 사용자 발화를 의도 단위로 모두 나눈다.\n"
             "- 한 문장에 여러 요청이 있으면 각각 별도 의도로.\n"
             "- '가능해?', '돼?'처럼 가능 여부만 묻는 것은 mode=inquiry. 명확히 해 달라는 요청만 action.\n"
             "- '아까 그거'처럼 지칭하면 최근 엔티티의 id를 slots에 채운다.\n"
@@ -151,7 +171,30 @@ def build_graph(box: Toolbox, checkpointer=None):
         text = _last_user_text(state)
         intents = [i.model_copy(update={"slots": Slots(**drop_ungrounded(i.slots.model_dump(), text))}) for i in intents]
         intents = _ensure_attachment_intents(intents, state)
+        prev_domain = next((t["intent"] for t in reversed(state.get("task_stack", []))
+                            if t.get("route") in domain_routes and t.get("turn", 0) < state.get("turn", 0)), None)
+        intents = _merge_domain_intents(intents, text, prev_domain)
         return {"extracted": [i.model_dump() for i in intents]}
+
+    def _merge_domain_intents(intents, text: str, prev: str | None = None):
+        """도메인 플러그인 의도: 플러그인 규칙으로 보정(짧은 후속은 직전 도메인 등)하고,
+        같은 종류는 하나로 합친다 (worker가 발화 전체로 한 번에 조회한다: 'A 지역 B 업종 비교')."""
+        seen, out = set(), []
+        for i in intents:
+            if plugin and plugin.continue_intent and i.intent == "other" and prev:
+                cont = plugin.continue_intent(text, prev)
+                if cont:
+                    i = i.model_copy(update={"intent": cont})
+            owner = next((p for p in domains.PLUGINS.values() if CATALOG.get(i.intent, {}).get("route") == p.route), None)
+            if owner:
+                fixed = owner.correct_intent(i.intent, text, prev) if owner.correct_intent else i.intent
+                if fixed != i.intent:
+                    i = i.model_copy(update={"intent": fixed})
+                if i.intent in seen:
+                    continue
+                seen.add(i.intent)
+            out.append(i)
+        return out
 
     def _ensure_attachment_intents(intents, state):
         """이번 턴에 들어온 첨부는 모델이 의도로 안 뽑아도 해석 작업을 만든다 (복합 발화에서 작은 모델이 빠뜨림)."""
@@ -265,6 +308,16 @@ def build_graph(box: Toolbox, checkpointer=None):
         guided = attach_guidelines(ready, state.get("profile"))
         return {"task_stack": changed + guided, "loops": state.get("loops", 0) + 1, "ready": [t["id"] for t in ready]}
 
+    def _route(t: Task) -> str:
+        """프로필별 경로 보정: 도메인 플러그인 프로필에서는 잡담·범위 밖(other)과 근거 없는 보고서 요청도 도메인 응답기가
+        맡는다 (서비스 정체성·안내 범위를 지키도록). 첨부·앞 작업이 있는 보고서는 그대로 report_writer."""
+        if plugin and plugin.handles_other:
+            if t["intent"] == "other":
+                return plugin.route
+            if t["intent"] == "report_compose" and not t.get("depends_on") and not (t.get("slots") or {}).get("attachment_id"):
+                return plugin.route
+        return t["route"]
+
     def fan_out(state: State):
         if state["loops"] > MAX_LOOPS or not state.get("ready"):
             return ["aggregator", "followup_generator"]  # 서로 독립: 병렬로 돌려 턴 지연을 줄인다
@@ -277,11 +330,17 @@ def build_graph(box: Toolbox, checkpointer=None):
                       for d in t.get("depends_on", []) if d in by_id}
             arg = {"task": t, "user_id": state["user_id"], "turn": state["turn"], "utterance": _last_user_text(state),
                    "inputs": inputs, "attachments": state.get("attachments") or {}, "profile": profile,
+                   "messages": state.get("messages", [])[-7:],
+                   "prev_intent": next((p["intent"] for p in reversed(state["task_stack"])
+                                        if p.get("route") in domain_routes and p.get("turn", 0) < state["turn"]), None),
+                   "prev_standalone": next(((p.get("result") or {}).get("standalone") for p in reversed(state["task_stack"])
+                                            if p.get("route") in domain_routes and p.get("turn", 0) < state["turn"]
+                                            and (p.get("result") or {}).get("standalone")), None),
                    "guidelines_text": render_guidelines(t.get("guidelines", []), profile)}
             if t["intent"] == "order_product" and t.get("phase") == "checkout":
                 sends.append(Send("confirm_gate", arg))
             else:
-                sends.append(Send(ROUTE_NODES.get(t["route"], "simple_worker"), arg))
+                sends.append(Send(route_nodes.get(_route(t), "simple_worker"), arg))
         return sends
 
     # ---------- ④ workers ----------
@@ -393,6 +452,11 @@ def build_graph(box: Toolbox, checkpointer=None):
         if report and (report.get("result") or {}).get("summary"):
             summary = report["result"]["summary"]
             return {"answer": summary, "messages": [AIMessage(content=summary)]}
+        # 도메인 worker 답은 도구 결과로 이미 작성됨: 그대로 잇는다 (도메인 외 작업이 섞이면 아래 일반 합성)
+        domain_done = [t for t in touched if _route(t) in domain_routes and t["status"] == "done"]
+        if domain_done and all(_route(t) in domain_routes or t["intent"] == "other" for t in touched):
+            summary = "\n\n".join((t.get("result") or {}).get("summary", "") for t in domain_done).strip()
+            return {"answer": summary, "messages": [AIMessage(content=summary)]}
         # supervisor 결과는 이미 사용자용 요약이므로 다시 요약하지 않는다 (LLM 호출 1회, 약 4초 절약)
         if len(touched) == 1 and touched[0]["route"] == "supervisor" and touched[0]["status"] == "done":
             summary = (touched[0]["result"] or {}).get("summary", "")
@@ -418,6 +482,9 @@ def build_graph(box: Toolbox, checkpointer=None):
         rules = rule_followups(_open_tasks(tasks))  # failed도 열린 작업에 포함됨 (중복 칩 버그 수정)
         llm_next = []
         turn_done = [t for t in tasks if t.get("turn") == state["turn"] and t["status"] == "done"]
+        domain_chips = [c for t in turn_done for c in (t.get("result") or {}).get("chips", [])]
+        if domain_chips:  # 도구가 준 후보(지역·업종) 선택이 다음 단계다
+            return {"followups": select_followups(rules, domain_chips[:4])}
         if not rules and turn_done:
             sup = [a for t in turn_done if t["route"] == "supervisor" for a in (t["result"] or {}).get("proposed_actions", [])]
             if sup:
@@ -447,6 +514,8 @@ def build_graph(box: Toolbox, checkpointer=None):
     g.add_node("attachment_worker", attachments.build_attachment_worker(box))
     g.add_node("report_writer", attachments.build_report_writer(box))
     g.add_node("memory_writer", memory.build_memory_writer())
+    for p in domains.PLUGINS.values():
+        g.add_node(p.worker_node, p.build_worker())
     g.add_node("aggregator", aggregator)
     g.add_node("output_guard", guards.build_output_guard())
     g.add_node("followup_generator", followup_generator)
@@ -459,8 +528,8 @@ def build_graph(box: Toolbox, checkpointer=None):
     g.add_edge("intent_extractor", "stack_merger")
     g.add_edge("stack_merger", "planner")
     g.add_edge("apply_chip", "planner")
-    g.add_conditional_edges("planner", fan_out, [*WORKER_NODES, "aggregator", "followup_generator"])
-    for w in WORKER_NODES:
+    g.add_conditional_edges("planner", fan_out, [*worker_nodes, "aggregator", "followup_generator"])
+    for w in worker_nodes:
         g.add_edge(w, "planner")  # 작업이 끝나면 다시 planner: 풀린 의존성을 같은 턴에 이어서 처리
     g.add_edge("aggregator", "output_guard")
     g.add_edge("output_guard", END)

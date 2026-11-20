@@ -215,4 +215,5 @@ async def test_graph_blocked_turn_routes_to_policy_reply(app):
 def test_extractor_hint_wired():
     from followups import graph
 
-    assert guards.EXTRACTOR_HINT in graph.EXTRACTOR_HINTS
+    for profile in ("all", "commerce"):
+        assert guards.EXTRACTOR_HINT in graph.extractor_hints(profile)

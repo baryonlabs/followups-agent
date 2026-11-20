@@ -7,7 +7,7 @@
 - build_report_writer(box) -> async worker(arg, config)       # route="report", arg["inputs"]에 앞 작업 결과
 - EXTRACTOR_HINT
 
-설계 (docs/rfp-structured-multiturn.md 5.1)
+설계 (docs/structured-multiturn.md 5.1)
 - 이미지는 입구에서 한 번만 VLM으로 '사실 JSON'으로 바꾼다. 상태에는 사실과 object_key만 두고 원본(base64)은 넣지 않는다.
 - 이후 턴은 이미지를 다시 모델에 보내지 않는다. '아까 보낸 차트'는 entity_memory.last_attachment로 푼다.
 - LLM 호출(read_image_facts, write_report)은 모듈 함수라 테스트에서 monkeypatch로 바꾼다 (빌더 인자로도 주입 가능).
