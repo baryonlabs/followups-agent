@@ -336,6 +336,10 @@ def build_graph(box: Toolbox, checkpointer=None, profile: str | None = None):
                    "prev_standalone": next(((p.get("result") or {}).get("standalone") for p in reversed(state["task_stack"])
                                             if p.get("route") in domain_routes and p.get("turn", 0) < state["turn"]
                                             and (p.get("result") or {}).get("standalone")), None),
+                   # 직전 도메인 턴의 결과(도구 호출 기록 포함): '작년'·'지난달' 같은 상대 기간을 그 턴의 기준 시점에서 계산한다
+                   "prev_result": next((p.get("result") for p in reversed(state["task_stack"])
+                                        if p.get("route") in domain_routes and p.get("turn", 0) < state["turn"]
+                                        and p.get("result")), None),
                    "guidelines_text": render_guidelines(t.get("guidelines", []), profile)}
             if t["intent"] == "order_product" and t.get("phase") == "checkout":
                 sends.append(Send("confirm_gate", arg))
